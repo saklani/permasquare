@@ -1,7 +1,7 @@
-import puppeteer from 'puppeteer';
+import * as puppeteer from 'puppeteer';
 import * as cheerio from 'cheerio';
 import { SiteAnalysis } from '@/types/extraction';
-import { URLUtils, AssetUtils, ContentUtils } from './utils';
+import { URLUtils, AssetUtils } from './utils';
 
 export class SiteAnalyzer {
   private browser: puppeteer.Browser | null = null;

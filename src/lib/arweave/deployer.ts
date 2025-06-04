@@ -152,7 +152,10 @@ export class ArweaveDeployer {
         totalSize: manifest.totalSize,
         deployedAt: new Date(),
         cost: estimatedCost,
-        gatewayUrl: ArweaveUtils.getGatewayUrl(manifestTxId, settings.gateway)
+        gatewayUrl: ArweaveUtils.getGatewayUrl(manifestTxId, settings.gateway),
+        totalAssets: progress.totalAssets,
+        totalCost: progress.totalCost,
+        totalPages: progress.totalPages
       };
 
       return deployment;
@@ -162,7 +165,7 @@ export class ArweaveDeployer {
         ...progress, 
         stage: 'error',
         message: `Deployment failed: ${error}`,
-        errors: [...progress.errors, error.toString()] 
+        errors: [...progress.errors, String(error)] 
       });
       throw error;
     }

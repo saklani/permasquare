@@ -30,6 +30,28 @@ export interface SiteManifest {
   settings: ExtractionSettings;
 }
 
+export interface ExtractionManifest {
+  url: string;
+  title: string;
+  description: string;
+  totalPages: number;
+  totalAssets: number;
+  totalSize: number;
+  extractedAt: string;
+  pages: Array<{
+    url: string;
+    path: string;
+    title: string;
+    size: number;
+  }>;
+  assets: Array<{
+    url: string;
+    path: string;
+    type: string;
+    size: number;
+  }>;
+}
+
 export interface ExtractionSettings {
   maxPages?: number;
   maxDepth?: number;

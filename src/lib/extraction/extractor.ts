@@ -1,19 +1,19 @@
-import puppeteer from 'puppeteer';
+import { Browser, launch } from 'puppeteer';
 import * as cheerio from 'cheerio';
-import { 
-  SiteExtractor, 
-  SiteManifest, 
-  SitePage, 
-  SiteAsset, 
-  ExtractionSettings, 
-  ExtractionProgress, 
-  SiteAnalysis 
+import {
+  SiteExtractor,
+  SiteManifest,
+  SitePage,
+  SiteAsset,
+  ExtractionSettings,
+  ExtractionProgress,
+  SiteAnalysis
 } from '@/types/extraction';
 import { URLUtils, AssetUtils, ContentUtils, ProgressTracker } from './utils';
 import { SiteAnalyzer } from './analyzer';
 
 export class GenericSiteExtractor implements SiteExtractor {
-  private browser: puppeteer.Browser | null = null;
+  private browser: Browser | null = null;
   private analyzer: SiteAnalyzer;
   private progressTracker: ProgressTracker;
   private visitedUrls: Set<string> = new Set();
@@ -53,31 +53,32 @@ export class GenericSiteExtractor implements SiteExtractor {
       // Stage 1: Analyze the site
       this.updateProgress(progress, { message: 'Analyzing site structure...' });
       const analysis = await this.analyzeUrl(url);
-      
+      console.log(analysis)
+
       // Stage 2: Crawl pages
-      this.updateProgress(progress, { 
-        stage: 'crawling', 
+      this.updateProgress(progress, {
+        stage: 'crawling',
         progress: 10,
-        message: 'Discovering pages...' 
+        message: 'Discovering pages...'
       });
-      
+
       const pages = await this.crawlPages(url, settings, progress);
-      
+
       // Stage 3: Download assets
-      this.updateProgress(progress, { 
-        stage: 'downloading', 
+      this.updateProgress(progress, {
+        stage: 'downloading',
         progress: 60,
         message: 'Downloading assets...',
-        pagesFound: pages.length 
+        pagesFound: pages.length
       });
-      
+
       const assets = await this.downloadAssets(url, pages, settings, progress);
-      
+
       // Complete
-      this.updateProgress(progress, { 
-        stage: 'complete', 
+      this.updateProgress(progress, {
+        stage: 'complete',
         progress: 100,
-        message: 'Extraction complete!' 
+        message: 'Extraction complete!'
       });
 
       const manifest: SiteManifest = {
@@ -94,10 +95,10 @@ export class GenericSiteExtractor implements SiteExtractor {
       return manifest;
 
     } catch (error) {
-      this.updateProgress(progress, { 
-        stage: 'error', 
-        message: `Extraction failed: ${error}`,
-        errors: [...progress.errors, error.toString()] 
+      this.updateProgress(progress, {
+        stage: 'error',
+        message: `Extraction failed: ${error instanceof Error ? error.message : String(error)}`,
+        errors: [...progress.errors, error instanceof Error ? error.message : String(error)]
       });
       throw error;
     } finally {
@@ -107,7 +108,7 @@ export class GenericSiteExtractor implements SiteExtractor {
 
   private async initBrowser(): Promise<void> {
     if (!this.browser) {
-      this.browser = await puppeteer.launch({
+      this.browser = await launch({
         headless: true,
         args: ['--no-sandbox', '--disable-setuid-sandbox']
       });
@@ -123,24 +124,24 @@ export class GenericSiteExtractor implements SiteExtractor {
   }
 
   private async crawlPages(
-    startUrl: string, 
-    settings: ExtractionSettings, 
+    startUrl: string,
+    settings: ExtractionSettings,
     progress: ExtractionProgress
   ): Promise<SitePage[]> {
     const pages: SitePage[] = [];
     const urlQueue: string[] = [startUrl];
     const maxPages = settings.maxPages || 10; // Start small
-    
+
     while (urlQueue.length > 0 && pages.length < maxPages) {
       const currentUrl = urlQueue.shift()!;
-      
+
       if (this.visitedUrls.has(currentUrl)) {
         continue;
       }
-      
+
       try {
         this.visitedUrls.add(currentUrl);
-        
+
         this.updateProgress(progress, {
           progress: 10 + (pages.length / maxPages) * 40,
           message: `Crawling: ${currentUrl}`,
@@ -165,18 +166,18 @@ export class GenericSiteExtractor implements SiteExtractor {
 
   private async extractPage(url: string, settings: ExtractionSettings): Promise<SitePage> {
     const page = await this.browser!.newPage();
-    
+
     try {
       await page.goto(url, { waitUntil: 'networkidle2', timeout: 15000 });
-      
+
       const content = await page.content();
       const $ = cheerio.load(content);
-      
+
       const title = $('title').text() || 'Untitled Page';
       const metadata = ContentUtils.extractMetadata(content);
       const links = this.extractLinks($, url);
       const assets = this.extractAssets($, url);
-      
+
       return {
         url,
         path: URLUtils.getPathFromUrl(url),
@@ -194,7 +195,7 @@ export class GenericSiteExtractor implements SiteExtractor {
 
   private extractLinks($: cheerio.CheerioAPI, baseUrl: string): string[] {
     const links: string[] = [];
-    
+
     $('a[href]').each((_, element) => {
       const href = $(element).attr('href');
       if (href) {
@@ -204,13 +205,13 @@ export class GenericSiteExtractor implements SiteExtractor {
         }
       }
     });
-    
+
     return [...new Set(links)];
   }
 
   private extractAssets($: cheerio.CheerioAPI, baseUrl: string): SiteAsset[] {
     const assets: SiteAsset[] = [];
-    
+
     // Images
     $('img[src]').each((_, element) => {
       const src = $(element).attr('src');
@@ -218,13 +219,13 @@ export class GenericSiteExtractor implements SiteExtractor {
         const absoluteUrl = URLUtils.normalizeUrl(src, baseUrl);
         assets.push({
           url: absoluteUrl,
-          path: URLUtils.getAssetPath(absoluteUrl, baseUrl),
+          path: URLUtils.getAssetPath(absoluteUrl),
           type: AssetUtils.getAssetType(absoluteUrl),
           mimeType: AssetUtils.getMimeType(absoluteUrl)
         });
       }
     });
-    
+
     // Stylesheets
     $('link[rel="stylesheet"]').each((_, element) => {
       const href = $(element).attr('href');
@@ -232,13 +233,13 @@ export class GenericSiteExtractor implements SiteExtractor {
         const absoluteUrl = URLUtils.normalizeUrl(href, baseUrl);
         assets.push({
           url: absoluteUrl,
-          path: URLUtils.getAssetPath(absoluteUrl, baseUrl),
+          path: URLUtils.getAssetPath(absoluteUrl),
           type: 'stylesheet',
           mimeType: 'text/css'
         });
       }
     });
-    
+
     // Scripts
     $('script[src]').each((_, element) => {
       const src = $(element).attr('src');
@@ -246,24 +247,24 @@ export class GenericSiteExtractor implements SiteExtractor {
         const absoluteUrl = URLUtils.normalizeUrl(src, baseUrl);
         assets.push({
           url: absoluteUrl,
-          path: URLUtils.getAssetPath(absoluteUrl, baseUrl),
+          path: URLUtils.getAssetPath(absoluteUrl),
           type: 'script',
           mimeType: 'application/javascript'
         });
       }
     });
-    
+
     return assets;
   }
 
   private async downloadAssets(
-    baseUrl: string, 
-    pages: SitePage[], 
+    baseUrl: string,
+    pages: SitePage[],
     settings: ExtractionSettings,
     progress: ExtractionProgress
   ): Promise<SiteAsset[]> {
     const allAssets = new Map<string, SiteAsset>();
-    
+
     pages.forEach(page => {
       page.assets.forEach(asset => {
         allAssets.set(asset.url, asset);
@@ -277,7 +278,7 @@ export class GenericSiteExtractor implements SiteExtractor {
 
     for (let i = 0; i < assets.length; i++) {
       const asset = assets[i];
-      
+
       try {
         this.updateProgress(progress, {
           progress: 60 + (i / assets.length) * 25,
@@ -288,7 +289,7 @@ export class GenericSiteExtractor implements SiteExtractor {
         // Use global fetch in Node.js environment
         const fetchFunction = global.fetch || (await import('node-fetch')).default;
         const response = await fetchFunction(asset.url);
-        
+
         if (response.ok) {
           const arrayBuffer = await response.arrayBuffer();
           const content = Buffer.from(arrayBuffer);

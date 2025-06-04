@@ -68,7 +68,7 @@ export class URLUtils {
     }
   }
 
-  static getAssetPath(assetUrl: string, baseUrl: string): string {
+  static getAssetPath(assetUrl: string): string {
     try {
       const urlObj = new URL(assetUrl);
       let path = urlObj.pathname;

@@ -44,7 +44,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Failed to estimate deployment cost',
-          details: error.toString()
+          details: error instanceof Error ? error.message : String(error)
         }, { status: 500 });
       }
 
@@ -74,8 +74,8 @@ export async function POST(request: NextRequest) {
             totalCost: deployment.cost,
             deployedAt: deployment.deployedAt,
             gatewayUrl: deployment.gatewayUrl,
-            totalPages: deployment.pageTxIds.length,
-            totalAssets: deployment.assetTxIds.length
+            totalPages: deployment?.pageTxIds?.length ?? 0,
+            totalAssets: deployment?.assetTxIds?.length ?? 0
           },
           message: 'Site deployed successfully to Arweave!'
         });
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Deployment failed',
-          details: error.toString()
+          details: String(error)
         }, { status: 500 });
       }
 
@@ -106,8 +106,7 @@ export async function POST(request: NextRequest) {
           success: true,
           wallet: {
             address: walletInfo.address,
-            balance: walletInfo.balance,
-            formattedBalance: ArweaveUtils.formatAR(walletInfo.balance.toString())
+            balance: walletInfo.address,
           }
         });
 
@@ -115,7 +114,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Failed to check wallet balance',
-          details: error.toString()
+          details: error
         }, { status: 500 });
       }
 
@@ -146,7 +145,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Failed to check deployment status',
-          details: error.toString()
+          details: error
         }, { status: 500 });
       }
     }
@@ -159,7 +158,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Deploy API error:', error);
     return NextResponse.json(
-      { error: 'Failed to process deployment request', details: error.toString() },
+      { error: 'Failed to process deployment request', details: error },
       { status: 500 }
     );
   }

@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Extraction failed',
-          details: error.toString(),
+          details: error,
           progress: progressData
         }, { status: 500 });
       }
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('API error:', error);
     return NextResponse.json(
-      { error: 'Failed to process request', details: error.toString() },
+      { error: 'Failed to process request', details: error },
       { status: 500 }
     );
   }

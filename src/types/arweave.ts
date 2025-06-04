@@ -4,12 +4,15 @@ export interface ArweaveDeployment {
   id: string;
   url: string;
   manifestTxId: string;
-  assetTxIds: string[];
-  pageTxIds: string[];
-  totalSize: number;
-  deployedAt: Date;
-  cost: number; // in AR
+  assetTxIds?: string[];
+  pageTxIds?: string[];
+  totalSize?: number;
+  deployedAt: Date | string;
+  cost?: number; // in AR
+  totalCost: number; // in AR (for compatibility)
   gatewayUrl: string;
+  totalPages: number;
+  totalAssets: number;
 }
 
 export interface DeploymentProgress {
@@ -87,6 +90,8 @@ export interface DeploymentEstimate {
   totalBytes: number;
   totalCostWinston: string;
   totalCostAR: number;
+  formattedCost: string;
+  formattedSize: string;
   breakdown: {
     pages: TransactionCost;
     assets: TransactionCost;
@@ -94,10 +99,83 @@ export interface DeploymentEstimate {
   };
 }
 
+// ArConnect wallet interface types
+export type PermissionType = 
+  | 'ACCESS_ADDRESS'
+  | 'ACCESS_PUBLIC_KEY'
+  | 'ACCESS_ALL_ADDRESSES'
+  | 'SIGN_TRANSACTION'
+  | 'ENCRYPT'
+  | 'DECRYPT'
+  | 'SIGNATURE';
+
+export interface AppInfo {
+  name?: string;
+  logo?: string;
+}
+
+export interface GatewayConfig {
+  host: string;
+  port: number;
+  protocol: 'http' | 'https';
+}
+
+export interface Transaction {
+  id: string;
+  last_tx: string;
+  owner: string;
+  tags: Array<{ name: string; value: string }>;
+  target: string;
+  quantity: string;
+  data: string;
+  reward: string;
+  signature: string;
+  data_size: string;
+  data_root: string;
+}
+
+export interface SignatureOptions {
+  hashAlgorithm?: string;
+  saltLength?: number;
+}
+
 export interface ArweaveWallet {
-  address: string;
-  balance: number; // in AR
-  connected: boolean;
+  walletName: string;
+  connect(
+    permissions: PermissionType[],
+    appInfo?: AppInfo,
+    gateway?: GatewayConfig
+  ): Promise<void>;
+  disconnect(): Promise<void>;
+  getActiveAddress(): Promise<string>;
+  getActivePublicKey(): Promise<string>;
+  getAllAddresses(): Promise<string[]>;
+  getWalletNames(): Promise<{ [addr: string]: string }>;
+  signature(
+    transaction: ArrayBufferView,
+    options?: SignatureOptions
+  ): Promise<Uint8Array>;
+  sign(
+    transaction: Transaction,
+    options?: SignatureOptions
+  ): Promise<Transaction>;
+  getPermissions(): Promise<PermissionType[]>;
+  encrypt(
+    data: ArrayBufferView,
+    algorithm: string,
+    options?: any
+  ): Promise<Uint8Array>;
+  decrypt(
+    data: ArrayBufferView,
+    algorithm: string,
+    options?: any
+  ): Promise<Uint8Array>;
+  getArweaveConfig(): Promise<{
+    host: string;
+    port: number;
+    protocol: string;
+  }>;
+  dispatch(transaction: Transaction): Promise<string>;
 }
 
 // Error types
