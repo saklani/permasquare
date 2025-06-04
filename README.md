@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Permasquare
+
+A tool to publish Squarespace (or similar CMS) sites to Arweave with ArNS integration.
+
+## Features
+
+- 🔗 **Arweave Wallet Integration** - Connect using ArConnect or other Arweave wallets
+- 📦 **Site Extraction** - Extract and convert Squarespace sites to static files
+- 🌐 **Permanent Storage** - Store sites permanently on Arweave
+- 🏷️ **ArNS Integration** - Register friendly domain names for deployed sites
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
+- [Bun](https://bun.sh/) installed on your system
+- An Arweave wallet (ArConnect browser extension recommended)
+
+### Installation
+
+1. Clone the repository:
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
+git clone <repository-url>
+cd permasquare
+```
+
+2. Install dependencies:
+```bash
+bun install
+```
+
+3. Run the development server:
+```bash
 bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4. Open [http://localhost:3000](http://localhost:3000) in your browser
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Usage
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+1. **Connect Wallet**: Click the "Connect Wallet" button and select your Arweave wallet
+2. **Upload Site**: Use the "Upload Site" button to extract and deploy your Squarespace site
+3. **Register ArNS**: Register a friendly domain name for your deployed site
 
-## Learn More
+## Tech Stack
 
-To learn more about Next.js, take a look at the following resources:
+- **Frontend**: Next.js 14 with TypeScript
+- **Styling**: Tailwind CSS
+- **Wallet**: Arweave Wallet Kit
+- **Blockchain**: Arweave + ArNS
+- **Package Manager**: Bun
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project Structure
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+permasquare/
+├── src/
+│   └── app/
+│       ├── layout.tsx      # App layout with wallet provider
+│       ├── page.tsx        # Main page with wallet connection
+│       └── globals.css     # Global styles
+├── package.json
+└── README.md
+```
 
-## Deploy on Vercel
+## Development Roadmap
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+See [tasks.md](tasks.md) for the complete development roadmap and task breakdown.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## License
+
+MIT License
