@@ -1,9 +1,9 @@
 "use client";
 
-import { AlertCircle, CheckCircle, DollarSign, Download, ExternalLink, FileText, Globe, Image, Loader, Upload } from "lucide-react";
-import { useEffect, useState } from "react";
-import { SiteAnalysis, ExtractionManifest } from "@/types/extraction";
 import { ArweaveDeployment, DeploymentEstimate } from "@/types/arweave";
+import { ExtractionManifest, SiteAnalysis } from "@/types/extraction";
+import { AlertCircle, CheckCircle, DollarSign, ExternalLink, Globe, Loader, Upload } from "lucide-react";
+import { useEffect, useState } from "react";
 
 export default function Home() {
   const [mounted, setMounted] = useState(false);
@@ -319,7 +319,7 @@ export default function Home() {
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
                       placeholder="https://example.squarespace.com"
-                      className="flex-1 px-4 py-3 border border-gray-300  focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg"
+                      className="flex-1 px-4 py-3 border border-gray-300 focus:ring-2 focus:ring-blue-500 focus:border-transparent text-lg text-gray-500"
                       disabled={analyzing || extracting || deploying}
                     />
                     <button

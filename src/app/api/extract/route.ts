@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GenericSiteExtractor } from '@/lib/extraction/extractor';
-import { ExtractionSettings, ExtractionProgress } from '@/types/extraction';
+import { analyzeSite, extractSite, cleanup } from '@/lib/extraction/basic';
+import { Progress } from '@/types/progress';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { url, settings = {}, action = 'analyze' } = body;
+    const { url, action = 'analyze', maxPages = 10, delay = 1000 } = body;
 
     if (!url) {
       return NextResponse.json(
@@ -24,64 +24,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const defaultSettings: ExtractionSettings = {
-      maxPages: action === 'extract' ? 10 : 5, // More pages for full extraction
-      maxDepth: 2,
-      includeAssets: true,
-      followExternalLinks: false,
-      respectRobotsTxt: true,
-      delay: 1000, // 1 second delay between requests
-      timeout: 15000,
-      ...settings
-    };
-
-    const extractor = new GenericSiteExtractor();
-    
     if (action === 'analyze') {
-      // Just analyze the site (existing functionality)
-      const analysis = await extractor.analyzeUrl(url);
-      
-      return NextResponse.json({
-        success: true,
-        analysis,
-        message: 'Site analysis complete.'
-      });
-    
-    } else if (action === 'extract') {
-      // Full extraction
-      let progressData: ExtractionProgress | null = null;
-      
-      // Set up progress tracking
-      extractor.addProgressListener((progress) => {
-        progressData = progress;
-      });
-
+      // Just analyze the site
       try {
-        const manifest = await extractor.extract(url, defaultSettings);
+        const analysis = await analyzeSite(url);
         
         return NextResponse.json({
           success: true,
-          manifest: {
-            url: manifest.url,
-            title: manifest.title,
-            description: manifest.description,
-            totalPages: manifest.pages.length,
-            totalAssets: manifest.assets.length,
-            totalSize: manifest.totalSize,
-            extractedAt: manifest.extractedAt,
-            pages: manifest.pages.map(page => ({
-              url: page.url,
-              path: page.path,
-              title: page.title,
-              size: page.content.length
-            })),
-            assets: manifest.assets.map(asset => ({
-              url: asset.url,
-              path: asset.path,
-              type: asset.type,
-              size: asset.size || 0
-            }))
-          },
+          analysis,
+          message: 'Site analysis complete.'
+        });
+      } catch (error) {
+        return NextResponse.json({
+          success: false,
+          error: 'Analysis failed',
+          details: error instanceof Error ? error.message : String(error)
+        }, { status: 500 });
+      }
+    
+    } else if (action === 'extract') {
+      // Full extraction
+      let progressData: Progress | null = null;
+      
+      try {
+        const manifest = await extractSite(url, {
+          maxPages: Math.min(maxPages, 20), // Cap at 20 pages
+          delay,
+          onProgress: (progress: Progress) => {
+            progressData = progress;
+          }
+        });
+        
+        return NextResponse.json({
+          success: true,
+          manifest,
           message: 'Site extraction complete!'
         });
         
@@ -89,9 +65,12 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Extraction failed',
-          details: error,
+          details: error instanceof Error ? error.message : String(error),
           progress: progressData
         }, { status: 500 });
+      } finally {
+        // Clean up browser resources
+        await cleanup();
       }
     }
 
@@ -103,7 +82,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('API error:', error);
     return NextResponse.json(
-      { error: 'Failed to process request', details: error },
+      { error: 'Failed to process request', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }

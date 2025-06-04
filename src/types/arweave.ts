@@ -15,18 +15,7 @@ export interface ArweaveDeployment {
   totalAssets: number;
 }
 
-export interface DeploymentProgress {
-  stage: 'preparing' | 'uploading_assets' | 'uploading_pages' | 'creating_manifest' | 'complete' | 'error';
-  progress: number; // 0-100
-  message: string;
-  assetsUploaded: number;
-  totalAssets: number;
-  pagesUploaded: number;
-  totalPages: number;
-  totalCost: number; // in AR
-  currentTxId?: string;
-  errors: string[];
-}
+// Removed DeploymentProgress - now using simplified Progress from @/types/progress
 
 export interface ArweaveManifest {
   manifest: 'arweave/paths';

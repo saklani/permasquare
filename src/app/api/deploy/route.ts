@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { ArweaveDeployer } from '@/lib/arweave/deployer';
-import { ArweaveUtils } from '@/lib/arweave/utils';
-import { SiteManifest } from '@/types/extraction';
+import { estimateDeployment, deployToArweave } from '@/lib/arweave/deploy';
+import { ExtractionManifest } from '@/types/extraction';
 import { DeploymentSettings } from '@/types/arweave';
 
 export async function POST(request: NextRequest) {
@@ -16,30 +15,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const deployer = new ArweaveDeployer();
-
     if (action === 'estimate') {
-      // Estimate deployment cost
       try {
-        const cost = await deployer.estimateCost(manifest as SiteManifest);
-        const estimate = await ArweaveUtils.estimateDeploymentCost(
-          manifest.pages.map((page: any) => ({ content: page.content, path: page.path })),
-          manifest.assets
-            .filter((asset: any) => asset.content)
-            .map((asset: any) => ({ content: asset.content, path: asset.path }))
-        );
+        const estimate = await estimateDeployment(manifest as ExtractionManifest);
 
         return NextResponse.json({
           success: true,
-          estimate: {
-            totalCostAR: cost,
-            totalCostWinston: estimate.totalCostWinston,
-            totalBytes: estimate.totalBytes,
-            breakdown: estimate.breakdown,
-            formattedCost: ArweaveUtils.formatAR(estimate.totalCostWinston),
-            formattedSize: ArweaveUtils.formatBytes(estimate.totalBytes)
-          }
+          estimate,
+          message: 'Cost estimation complete.'
         });
+
       } catch (error) {
         return NextResponse.json({
           success: false,
@@ -49,7 +34,6 @@ export async function POST(request: NextRequest) {
       }
 
     } else if (action === 'deploy') {
-      // Full deployment
       if (!wallet) {
         return NextResponse.json(
           { error: 'Wallet is required for deployment' },
@@ -57,26 +41,20 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      try {
-        deployer.setWallet(wallet);
-        
-        const deployment = await deployer.deploy(
-          manifest as SiteManifest, 
-          settings as DeploymentSettings
+      try {        
+        const deployment = await deployToArweave(
+          manifest as ExtractionManifest,
+          wallet,
+          {
+            onProgress: (progress) => {
+              console.log(`Deployment progress: ${progress.step} - ${progress.percent}% - ${progress.message}`);
+            }
+          }
         );
 
         return NextResponse.json({
           success: true,
-          deployment: {
-            id: deployment.id,
-            url: deployment.url,
-            manifestTxId: deployment.manifestTxId,
-            totalCost: deployment.cost,
-            deployedAt: deployment.deployedAt,
-            gatewayUrl: deployment.gatewayUrl,
-            totalPages: deployment?.pageTxIds?.length ?? 0,
-            totalAssets: deployment?.assetTxIds?.length ?? 0
-          },
+          deployment,
           message: 'Site deployed successfully to Arweave!'
         });
 
@@ -84,81 +62,20 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({
           success: false,
           error: 'Deployment failed',
-          details: String(error)
-        }, { status: 500 });
-      }
-
-    } else if (action === 'check_balance') {
-      // Check wallet balance
-      if (!wallet) {
-        return NextResponse.json(
-          { error: 'Wallet is required to check balance' },
-          { status: 400 }
-        );
-      }
-
-      try {
-        const arweave = ArweaveUtils.getArweaveInstance();
-        const walletAddress = await arweave.wallets.jwkToAddress(wallet);
-        const walletInfo = await ArweaveUtils.getWalletInfo(walletAddress);
-
-        return NextResponse.json({
-          success: true,
-          wallet: {
-            address: walletInfo.address,
-            balance: walletInfo.address,
-          }
-        });
-
-      } catch (error) {
-        return NextResponse.json({
-          success: false,
-          error: 'Failed to check wallet balance',
-          details: error
-        }, { status: 500 });
-      }
-
-    } else if (action === 'status') {
-      // Check deployment status
-      const { txId } = body;
-      
-      if (!txId) {
-        return NextResponse.json(
-          { error: 'Transaction ID is required' },
-          { status: 400 }
-        );
-      }
-
-      try {
-        const status = await deployer.getDeploymentStatus(txId);
-        const url = ArweaveUtils.getManifestUrl(txId);
-
-        return NextResponse.json({
-          success: true,
-          status,
-          txId,
-          url,
-          isValid: ArweaveUtils.isValidTxId(txId)
-        });
-
-      } catch (error) {
-        return NextResponse.json({
-          success: false,
-          error: 'Failed to check deployment status',
-          details: error
+          details: error instanceof Error ? error.message : String(error)
         }, { status: 500 });
       }
     }
 
     return NextResponse.json(
-      { error: 'Invalid action. Use "estimate", "deploy", "check_balance", or "status"' },
+      { error: 'Invalid action. Use "estimate" or "deploy"' },
       { status: 400 }
     );
 
   } catch (error) {
     console.error('Deploy API error:', error);
     return NextResponse.json(
-      { error: 'Failed to process deployment request', details: error },
+      { error: 'Failed to process deployment request', details: error instanceof Error ? error.message : String(error) },
       { status: 500 }
     );
   }
