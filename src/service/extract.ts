@@ -6,6 +6,8 @@ import { saveFile } from './storage';
 export interface ExtractionResult {
   savedPages: string[];
   totalPages: number;
+  savedAssets: string[];
+  totalAssets: number;
 }
 
 export interface SiteAnalysis {
@@ -34,6 +36,8 @@ export async function crawlAndSave(
   const visited = new Set<string>();
   const queue = [startUrl];
   const savedPages: string[] = [];
+  const assetQueue = new Set<string>();
+  const savedAssets: string[] = [];
 
   while (queue.length > 0 && savedPages.length < maxPages) {
     const currentUrl = queue.shift()!;
@@ -72,6 +76,9 @@ export async function crawlAndSave(
         console.log(`✅ [Save] Page saved: ${currentUrl} (${pageSize} bytes)`);
         savedPages.push(currentUrl);
 
+        // Extract and queue assets (CSS, JS, images, fonts)
+        await extractAssets($, currentUrl, startUrl, assetQueue);
+
         // Extract links for further crawling
         const links: string[] = [];
         $('a[href]').each((_, el) => {
@@ -102,12 +109,210 @@ export async function crawlAndSave(
     }
   }
 
-  console.log(`✅ [Crawl] Complete. Saved ${savedPages.length} pages`);
+  // Download all discovered assets
+  console.log(`🎨 [Assets] Downloading ${assetQueue.size} assets...`);
+  for (const assetUrl of assetQueue) {
+    try {
+      const success = await downloadAsset(assetUrl, startUrl);
+      if (success) {
+        savedAssets.push(assetUrl);
+      }
+    } catch (error) {
+      console.error(`❌ [Assets] Failed to download ${assetUrl}:`, error);
+    }
+  }
+
+  console.log(`✅ [Crawl] Complete. Saved ${savedPages.length} pages and ${savedAssets.length} assets`);
   
   return {
     savedPages,
-    totalPages: savedPages.length
+    totalPages: savedPages.length,
+    savedAssets,
+    totalAssets: savedAssets.length
   };
+}
+
+async function extractAssets(
+  $: cheerio.CheerioAPI, 
+  pageUrl: string, 
+  startUrl: string, 
+  assetQueue: Set<string>
+): Promise<void> {
+  const baseUrl = new URL(pageUrl);
+  
+  // Extract CSS files from <link> tags
+  $('link[rel="stylesheet"], link[type="text/css"]').each((_, el) => {
+    const href = $(el).attr('href');
+    if (href) {
+      try {
+        const fullUrl = new URL(href, pageUrl).href;
+        if (isSameDomain(fullUrl, startUrl)) {
+          assetQueue.add(fullUrl);
+          console.log(`🎨 [Asset] Found CSS: ${fullUrl}`);
+        }
+      } catch {
+        // Ignore invalid URLs
+      }
+    }
+  });
+
+  // Extract JavaScript files
+  $('script[src]').each((_, el) => {
+    const src = $(el).attr('src');
+    if (src) {
+      try {
+        const fullUrl = new URL(src, pageUrl).href;
+        if (isSameDomain(fullUrl, startUrl)) {
+          assetQueue.add(fullUrl);
+          console.log(`📜 [Asset] Found JS: ${fullUrl}`);
+        }
+      } catch {
+        // Ignore invalid URLs
+      }
+    }
+  });
+
+  // Extract images
+  $('img[src], img[data-src]').each((_, el) => {
+    const src = $(el).attr('src') || $(el).attr('data-src');
+    if (src) {
+      try {
+        const fullUrl = new URL(src, pageUrl).href;
+        if (isSameDomain(fullUrl, startUrl)) {
+          assetQueue.add(fullUrl);
+          console.log(`🖼️ [Asset] Found image: ${fullUrl}`);
+        }
+      } catch {
+        // Ignore invalid URLs
+      }
+    }
+  });
+
+  // Extract fonts and other assets from CSS @import and url()
+  $('style').each((_, el) => {
+    const cssContent = $(el).text();
+    extractCssAssets(cssContent, pageUrl, startUrl, assetQueue);
+  });
+
+  // Extract background images and other CSS assets from inline styles
+  $('[style]').each((_, el) => {
+    const styleAttr = $(el).attr('style');
+    if (styleAttr) {
+      extractCssAssets(styleAttr, pageUrl, startUrl, assetQueue);
+    }
+  });
+
+  // Extract favicon and icons
+  $('link[rel*="icon"]').each((_, el) => {
+    const href = $(el).attr('href');
+    if (href) {
+      try {
+        const fullUrl = new URL(href, pageUrl).href;
+        if (isSameDomain(fullUrl, startUrl)) {
+          assetQueue.add(fullUrl);
+          console.log(`🏷️ [Asset] Found icon: ${fullUrl}`);
+        }
+      } catch {
+        // Ignore invalid URLs
+      }
+    }
+  });
+}
+
+function extractCssAssets(
+  cssContent: string, 
+  pageUrl: string, 
+  startUrl: string, 
+  assetQueue: Set<string>
+): void {
+  // Extract @import statements
+  const importRegex = /@import\s+(?:url\()?['"](.*?)['"](?:\))?/g;
+  let match;
+  while ((match = importRegex.exec(cssContent)) !== null) {
+    try {
+      const fullUrl = new URL(match[1], pageUrl).href;
+      if (isSameDomain(fullUrl, startUrl)) {
+        assetQueue.add(fullUrl);
+        console.log(`📥 [Asset] Found @import: ${fullUrl}`);
+      }
+    } catch {
+      // Ignore invalid URLs
+    }
+  }
+
+  // Extract url() references (fonts, images, etc.)
+  const urlRegex = /url\(['"]?(.*?)['"]?\)/g;
+  while ((match = urlRegex.exec(cssContent)) !== null) {
+    try {
+      const fullUrl = new URL(match[1], pageUrl).href;
+      if (isSameDomain(fullUrl, startUrl)) {
+        assetQueue.add(fullUrl);
+        console.log(`🔗 [Asset] Found CSS url(): ${fullUrl}`);
+      }
+    } catch {
+      // Ignore invalid URLs
+    }
+  }
+}
+
+async function downloadAsset(assetUrl: string, startUrl: string): Promise<boolean> {
+  try {
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    
+    try {
+      // Set appropriate headers for different asset types
+      await page.setExtraHTTPHeaders({
+        'Accept': '*/*',
+        'User-Agent': 'Mozilla/5.0 (compatible; Permasquare/1.0)'
+      });
+
+      const response = await page.goto(assetUrl, { timeout: 10000 });
+      
+      if (!response || response.status() !== 200) {
+        console.warn(`⚠️ [Asset] Non-200 response for ${assetUrl}: ${response?.status()}`);
+        return false;
+      }
+
+      const content = await response.buffer();
+      const contentType = response.headers()['content-type'] || getMimeTypeFromUrl(assetUrl);
+      
+      // Create S3 key from URL
+      let s3Key = assetUrl.replace(/^https?:\/\//, '');
+      
+      console.log(`💾 [Asset] Saving to S3: ${s3Key} (${content.length} bytes, ${contentType})`);
+      await saveFile(s3Key, content, contentType);
+      
+      return true;
+    } finally {
+      await page.close();
+    }
+  } catch (error) {
+    console.error(`❌ [Asset] Failed to download ${assetUrl}:`, error);
+    return false;
+  }
+}
+
+function getMimeTypeFromUrl(url: string): string {
+  const ext = url.split('.').pop()?.toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    'css': 'text/css',
+    'js': 'application/javascript',
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'svg': 'image/svg+xml',
+    'webp': 'image/webp',
+    'ico': 'image/x-icon',
+    'woff': 'font/woff',
+    'woff2': 'font/woff2',
+    'ttf': 'font/ttf',
+    'eot': 'application/vnd.ms-fontobject',
+    'otf': 'font/otf'
+  };
+  
+  return mimeTypes[ext || ''] || 'application/octet-stream';
 }
 
 export async function analyzeSite(url: string): Promise<SiteAnalysis> {
