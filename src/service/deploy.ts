@@ -186,56 +186,116 @@ function calculateContentSize(pages: Map<string, string>, assets: Map<string, Bu
 function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>): string {
   let updated = html;
   
-  // Create a mapping that includes both the path and potential variations
+  // Create comprehensive path mappings with all variations
   const pathMappings = new Map<string, string>();
   
   for (const [path, txId] of Object.entries(fileMapping)) {
+    // Add the original path
     pathMappings.set(path, txId);
     
-    // For HTML files, also map without .html extension
+    // Add path without leading slash
+    if (path.startsWith('/')) {
+      pathMappings.set(path.substring(1), txId);
+    }
+    
+    // For HTML files, create additional mappings
     if (path.endsWith('.html')) {
       const pathWithoutExt = path.replace(/\.html$/, '');
       pathMappings.set(pathWithoutExt, txId);
       
-      // Also handle index.html as directory root
+      // Without leading slash and extension
+      if (pathWithoutExt.startsWith('/')) {
+        pathMappings.set(pathWithoutExt.substring(1), txId);
+      }
+      
+      // Handle index.html as directory root
       if (path.endsWith('/index.html')) {
         const dirPath = path.replace('/index.html', '/');
         pathMappings.set(dirPath, txId);
         pathMappings.set(dirPath.slice(0, -1), txId); // without trailing slash
+        
+        // Also add without leading slash
+        if (dirPath.length > 1) {
+          pathMappings.set(dirPath.substring(1), txId);
+          pathMappings.set(dirPath.substring(1).slice(0, -1), txId);
+        }
       }
     }
   }
   
-  // Replace URLs in href, src, and CSS url() references
+  console.log(`🔗 [URL Replace] Created ${pathMappings.size} path mappings from ${Object.keys(fileMapping).length} files`);
+  
+  // Replace URLs in all possible attributes and contexts
   for (const [originalPath, txId] of pathMappings.entries()) {
+    if (!originalPath) continue; // Skip empty paths
+    
+    const escapedPath = escapeRegex(originalPath);
     const patterns = [
-      // Exact href matches
-      new RegExp(`href=["']${escapeRegex(originalPath)}["']`, 'g'),
-      // Exact src matches  
-      new RegExp(`src=["']${escapeRegex(originalPath)}["']`, 'g'),
-      // CSS url() matches
-      new RegExp(`url\\(["']?${escapeRegex(originalPath)}["']?\\)`, 'g'),
-      // Relative path matches (starting with ./)
-      new RegExp(`href=["']\\.\/${escapeRegex(originalPath.replace(/^\//, ''))}["']`, 'g'),
-      new RegExp(`src=["']\\.\/${escapeRegex(originalPath.replace(/^\//, ''))}["']`, 'g')
+      // Standard href and src attributes
+      new RegExp(`href=["']${escapedPath}["']`, 'g'),
+      new RegExp(`src=["']${escapedPath}["']`, 'g'),
+      new RegExp(`action=["']${escapedPath}["']`, 'g'), // Forms
+      new RegExp(`data-src=["']${escapedPath}["']`, 'g'), // Lazy loading
+      new RegExp(`data-href=["']${escapedPath}["']`, 'g'), // Dynamic links
+      new RegExp(`srcset=["'][^"']*${escapedPath}[^"']*["']`, 'g'), // Responsive images
+      
+      // CSS url() references  
+      new RegExp(`url\\(["']?${escapedPath}["']?\\)`, 'g'),
+      
+      // Relative paths with ./
+      new RegExp(`href=["']\\.\/${escapedPath.replace(/^\//, '')}["']`, 'g'),
+      new RegExp(`src=["']\\.\/${escapedPath.replace(/^\//, '')}["']`, 'g'),
+      
+      // JavaScript string references (common in SPAs and dynamic content)
+      new RegExp(`["']${escapedPath}["']`, 'g'),
+      
+      // Manifest and service worker references
+      new RegExp(`"${escapedPath}"`, 'g'),
+      
+      // Meta tag content (for manifests, etc.)
+      new RegExp(`content=["'][^"']*${escapedPath}[^"']*["']`, 'g')
     ];
     
     for (const pattern of patterns) {
       updated = updated.replace(pattern, (match) => {
-        // Replace with Arweave URL but preserve the attribute structure
-        if (match.includes('href=')) {
-          return match.replace(/href=["'][^"']*["']/, `href="https://arweave.net/${txId}"`);
-        } else if (match.includes('src=')) {
-          return match.replace(/src=["'][^"']*["']/, `src="https://arweave.net/${txId}"`);
-        } else if (match.includes('url(')) {
-          return match.replace(/url\([^)]*\)/, `url(https://arweave.net/${txId})`);
+        // Skip if this looks like it's already been replaced
+        if (match.includes('arweave.net')) {
+          return match;
         }
+        
+        const arweaveUrl = `https://arweave.net/${txId}`;
+        
+        // Handle different attribute types
+        if (match.includes('href=')) {
+          return match.replace(/href=["'][^"']*["']/, `href="${arweaveUrl}"`);
+        } else if (match.includes('src=')) {
+          return match.replace(/src=["'][^"']*["']/, `src="${arweaveUrl}"`);
+        } else if (match.includes('action=')) {
+          return match.replace(/action=["'][^"']*["']/, `action="${arweaveUrl}"`);
+        } else if (match.includes('data-src=')) {
+          return match.replace(/data-src=["'][^"']*["']/, `data-src="${arweaveUrl}"`);
+        } else if (match.includes('data-href=')) {
+          return match.replace(/data-href=["'][^"']*["']/, `data-href="${arweaveUrl}"`);
+        } else if (match.includes('srcset=')) {
+          return match.replace(new RegExp(escapedPath, 'g'), arweaveUrl);
+        } else if (match.includes('url(')) {
+          return match.replace(/url\([^)]*\)/, `url(${arweaveUrl})`);
+        } else if (match.includes('content=')) {
+          return match.replace(new RegExp(escapedPath, 'g'), arweaveUrl);
+        } else if (match.match(/^["'].*["']$/)) {
+          // JavaScript string - be more careful here
+          return match.replace(new RegExp(`["']${escapedPath}["']`, 'g'), `"${arweaveUrl}"`);
+        } else if (match.match(/^".*"$/)) {
+          // JSON string
+          return match.replace(new RegExp(`"${escapedPath}"`, 'g'), `"${arweaveUrl}"`);
+        }
+        
         return match;
       });
     }
   }
   
-  // Clean up any remaining relative links that might reference internal pages
+  // Clean up any remaining relative links
   updated = cleanupRelativeLinks(updated, fileMapping);
   
   return updated;
@@ -248,43 +308,96 @@ function escapeRegex(str: string): string {
 function cleanupRelativeLinks(html: string, fileMapping: Record<string, string>): string {
   let updated = html;
   
-  // Find all href and src attributes that might be relative internal links
-  const relativeLinkPattern = /((?:href|src)=["'])([^"']*)(["'])/g;
+  // Comprehensive pattern to catch all link attributes
+  const linkPatterns = [
+    /((?:href|src|action|data-src|data-href)=["'])([^"']*)(["'])/g,
+    // Handle srcset attributes specially
+    /(srcset=["'])([^"']*)(["'])/g
+  ];
   
-  updated = updated.replace(relativeLinkPattern, (match, prefix, url, suffix) => {
-    // Skip external URLs, anchors, and protocols
-    if (url.startsWith('http') || url.startsWith('//') || url.startsWith('#') || url.startsWith('mailto:') || url.startsWith('tel:')) {
-      return match;
-    }
-    
-    // Try to find a matching file in our mapping
-    let cleanUrl = url;
-    
-    // Remove leading ./ or /
-    cleanUrl = cleanUrl.replace(/^\.?\//, '/');
-    
-    // If it doesn't end with an extension, try adding .html
-    if (!cleanUrl.includes('.')) {
-      cleanUrl += '.html';
-    }
-    
-    // Check if we have this file mapped
-    for (const [path, txId] of Object.entries(fileMapping)) {
-      if (path === cleanUrl || path.endsWith(cleanUrl)) {
-        return `${prefix}https://arweave.net/${txId}${suffix}`;
+  for (const pattern of linkPatterns) {
+    updated = updated.replace(pattern, (match, prefix, content, suffix) => {
+      // For srcset, we need to handle multiple URLs
+      if (prefix.includes('srcset=')) {
+        const updatedContent = content.replace(/([^\s,]+)/g, (url: string) => {
+          return processRelativeUrl(url, fileMapping) || url;
+        });
+        return `${prefix}${updatedContent}${suffix}`;
+      } else {
+        // Single URL
+        const processedUrl = processRelativeUrl(content, fileMapping);
+        return processedUrl ? `${prefix}${processedUrl}${suffix}` : match;
       }
-    }
-    
-    return match;
-  });
+    });
+  }
   
   return updated;
+}
+
+function processRelativeUrl(url: string, fileMapping: Record<string, string>): string | null {
+  // Skip external URLs, anchors, data URLs, and protocols
+  if (url.startsWith('http') || 
+      url.startsWith('//') || 
+      url.startsWith('#') || 
+      url.startsWith('mailto:') || 
+      url.startsWith('tel:') ||
+      url.startsWith('data:') ||
+      url.startsWith('javascript:') ||
+      url.includes('arweave.net')) {
+    return null;
+  }
+  
+  // Try multiple variations of the URL
+  const urlVariations = [];
+  let cleanUrl = url;
+  
+  // Remove query parameters and fragments for matching
+  cleanUrl = cleanUrl.split('?')[0].split('#')[0];
+  
+  // Remove leading ./ or /
+  const normalizedUrl = cleanUrl.replace(/^\.?\//, '/');
+  urlVariations.push(normalizedUrl);
+  
+  // Try without leading slash
+  if (normalizedUrl.startsWith('/')) {
+    urlVariations.push(normalizedUrl.substring(1));
+  }
+  
+  // If it doesn't end with an extension, try adding .html
+  if (!normalizedUrl.includes('.')) {
+    urlVariations.push(normalizedUrl + '.html');
+    if (normalizedUrl.startsWith('/')) {
+      urlVariations.push(normalizedUrl.substring(1) + '.html');
+    }
+  }
+  
+  // Try index.html variations for directory paths
+  if (normalizedUrl.endsWith('/')) {
+    urlVariations.push(normalizedUrl + 'index.html');
+    if (normalizedUrl.startsWith('/')) {
+      urlVariations.push(normalizedUrl.substring(1) + 'index.html');
+    }
+  }
+  
+  // Check if we have any of these variations mapped
+  for (const variation of urlVariations) {
+    for (const [path, txId] of Object.entries(fileMapping)) {
+      if (path === variation || 
+          path.endsWith(variation) || 
+          variation.endsWith(path.replace(/^\//, ''))) {
+        console.log(`🔗 [Cleanup] Mapping ${url} -> ${variation} -> ${txId}`);
+        return `https://arweave.net/${txId}`;
+      }
+    }
+  }
+  
+  return null;
 }
 
 function preprocessCssContent(cssContent: string, fileMapping: Record<string, string>): string {
   let updatedCss = cssContent;
   
-  // Create a mapping that includes both the path and potential variations
+  // Create comprehensive path mappings
   const pathMappings = new Map<string, string>();
   
   for (const [path, txId] of Object.entries(fileMapping)) {
@@ -294,37 +407,88 @@ function preprocessCssContent(cssContent: string, fileMapping: Record<string, st
     if (path.startsWith('/')) {
       pathMappings.set(path.substring(1), txId);
     }
+    
+    // Map relative paths
+    const relativePath = path.startsWith('/') ? path.substring(1) : path;
+    pathMappings.set(relativePath, txId);
+    pathMappings.set('./' + relativePath, txId);
+    pathMappings.set('../' + relativePath, txId);
   }
   
-  // Replace @import statements
-  const importRegex = /@import\s+(?:url\()?['"](.*?)['"](?:\))?/g;
-  updatedCss = updatedCss.replace(importRegex, (match, importPath) => {
-    for (const [originalPath, txId] of pathMappings.entries()) {
-      if (originalPath.endsWith(importPath) || importPath.endsWith(originalPath)) {
-        return match.replace(importPath, `https://arweave.net/${txId}`);
-      }
-    }
-    return match;
-  });
+  // Replace @import statements (multiple formats)
+  const importPatterns = [
+    /@import\s+url\(['"]([^'"]*)['"]\)/g,
+    /@import\s+['"]([^'"]*)['"]/g,
+    /@import\s+url\(([^)]*)\)/g
+  ];
   
-  // Replace url() references (fonts, background images, etc.)
-  const urlRegex = /url\(['"]?(.*?)['"]?\)/g;
-  updatedCss = updatedCss.replace(urlRegex, (match, urlPath) => {
-    // Skip external URLs and data URLs
-    if (urlPath.startsWith('http') || urlPath.startsWith('//') || urlPath.startsWith('data:')) {
+  for (const pattern of importPatterns) {
+    updatedCss = updatedCss.replace(pattern, (match, importPath) => {
+      const cleanPath = importPath.replace(/^['"]|['"]$/g, ''); // Remove quotes
+      const processedUrl = findMatchingPath(cleanPath, pathMappings);
+      if (processedUrl) {
+        console.log(`🎨 [CSS Import] ${cleanPath} -> ${processedUrl}`);
+        return match.replace(cleanPath, processedUrl);
+      }
+      return match;
+    });
+  }
+  
+  // Replace url() references with comprehensive pattern matching
+  const urlRegex = /url\(\s*(['"]?)([^'")\s]*)\1\s*\)/g;
+  updatedCss = updatedCss.replace(urlRegex, (match, quote, urlPath) => {
+    // Skip external URLs, data URLs, and already processed URLs
+    if (urlPath.startsWith('http') || 
+        urlPath.startsWith('//') || 
+        urlPath.startsWith('data:') ||
+        urlPath.includes('arweave.net')) {
       return match;
     }
     
-    for (const [originalPath, txId] of pathMappings.entries()) {
-      if (originalPath.endsWith(urlPath) || urlPath.endsWith(originalPath.replace(/^\//, ''))) {
-        return `url(https://arweave.net/${txId})`;
-      }
+    const processedUrl = findMatchingPath(urlPath, pathMappings);
+    if (processedUrl) {
+      console.log(`🎨 [CSS URL] ${urlPath} -> ${processedUrl}`);
+      return `url(${processedUrl})`;
     }
+    
     return match;
   });
   
   console.log(`🎨 [CSS] Processed CSS file with ${pathMappings.size} potential replacements`);
   return updatedCss;
+}
+
+function findMatchingPath(searchPath: string, pathMappings: Map<string, string>): string | null {
+  // Clean the search path
+  const cleanPath = searchPath.split('?')[0].split('#')[0]; // Remove query/fragment
+  
+  // Direct match
+  if (pathMappings.has(cleanPath)) {
+    return `https://arweave.net/${pathMappings.get(cleanPath)}`;
+  }
+  
+  // Try variations
+  const variations = [
+    cleanPath,
+    cleanPath.startsWith('/') ? cleanPath.substring(1) : '/' + cleanPath,
+    cleanPath.startsWith('./') ? cleanPath.substring(2) : './' + cleanPath,
+    cleanPath.startsWith('../') ? cleanPath.substring(3) : '../' + cleanPath
+  ];
+  
+  for (const variation of variations) {
+    if (pathMappings.has(variation)) {
+      return `https://arweave.net/${pathMappings.get(variation)}`;
+    }
+    
+    // Check if any mapped path ends with this variation
+    for (const [mappedPath, txId] of pathMappings.entries()) {
+      if (mappedPath.endsWith(variation) || variation.endsWith(mappedPath.replace(/^\//, ''))) {
+        return `https://arweave.net/${txId}`;
+      }
+    }
+  }
+  
+  return null;
 }
 
 function createArweaveManifest(fileMapping: Record<string, string>) {

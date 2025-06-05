@@ -278,7 +278,7 @@ async function downloadAsset(assetUrl: string, startUrl: string): Promise<boolea
       const contentType = response.headers()['content-type'] || getMimeTypeFromUrl(assetUrl);
       
       // Create S3 key from URL
-      let s3Key = assetUrl.replace(/^https?:\/\//, '');
+      const s3Key = assetUrl.replace(/^https?:\/\//, '');
       
       console.log(`💾 [Asset] Saving to S3: ${s3Key} (${content.length} bytes, ${contentType})`);
       await saveFile(s3Key, content, contentType);
