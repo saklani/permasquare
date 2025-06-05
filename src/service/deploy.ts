@@ -1,6 +1,6 @@
 import { TurboFactory, ArweaveSigner } from '@ardrive/turbo-sdk';
 import { listFiles, getMultipleFiles } from './storage';
-import { loadWalletFromEnv, fundBundlerIfNeeded, getWalletBalance } from './arweave';
+import { loadWalletFromEnv, getWalletBalance } from './arweave';
 
 export interface DeploymentResult {
   bundleId: string;
@@ -15,7 +15,6 @@ export async function deployWithTurbo(
 ): Promise<DeploymentResult> {
   console.log(`🚀 [Turbo] Starting deployment for: ${hostname}`);
   
-  // Use provided wallet or load from environment/file
   let wallet = jwkWallet;
   if (!wallet) {
     try {
@@ -26,17 +25,7 @@ export async function deployWithTurbo(
     }
   }
   
-  // Get estimated cost for payment verification
-  const costEstimate = await estimateDeploymentCost(hostname);
-  console.log(`💰 [Turbo] Estimated cost: ${costEstimate.formattedCost} AR (${costEstimate.formattedSize})`);
-  
-  // Check if bundler funding is needed
-  const fundingResult = await fundBundlerIfNeeded(wallet, costEstimate.totalCostAR);
-  if (!fundingResult.funded) {
-    throw new Error(`Bundler funding failed: ${fundingResult.error}`);
-  }
-  
-  // Initialize turbo with verified wallet
+  // Initialize turbo with the wallet - no pre-funding check
   const turbo = TurboFactory.authenticated({
     privateKey: wallet
   });
@@ -75,7 +64,7 @@ export async function deployWithTurbo(
     // Process CSS files to update internal references
     if (mimeType === 'text/css') {
       processedContent = Buffer.from(
-        preprocessCssContent(content.toString('utf8'), fileMapping), 
+        preprocessCssContent(content.toString('utf8'), fileMapping, path), 
         'utf8'
       );
     }
@@ -450,45 +439,55 @@ function cleanupRelativeLinks(html: string, fileMapping: Record<string, string>)
   });
 }
 
-function preprocessCssContent(cssContent: string, fileMapping: Record<string, string>): string {
-  console.log('🎨 [CSS] Processing CSS content...');
+function preprocessCssContent(cssContent: string, fileMapping: Record<string, string>, cssFilePath: string): string {
+  console.log(`🎨 [CSS] Processing CSS content for: ${cssFilePath}`);
   
-  // Use the same optimized path lookup
   const pathLookup = buildPathLookup(fileMapping);
   let updatedCss = cssContent;
   
-  // Combined regex for all CSS URL patterns
   const cssUrlPattern = /(@import\s+(?:url\()?['"](.*?)['"](?:\))?)|(?:url\((['"]?)(.*?)\3\))/g;
   
   updatedCss = updatedCss.replace(cssUrlPattern, (match, importMatch, importPath, urlQuote, urlPath) => {
-    let targetPath: string;
+    let originalTargetPath: string;
     let isImport = false;
     
     if (importMatch && importPath) {
-      // @import statement
-      targetPath = importPath;
+      originalTargetPath = importPath;
       isImport = true;
     } else if (urlPath !== undefined) {
-      // url() reference
-      targetPath = urlPath;
+      originalTargetPath = urlPath;
     } else {
-      return match;
+      return match; // Should not happen with the given regex
     }
     
-    // Skip external URLs and data URIs
-    if (shouldSkipUrl(targetPath)) {
+    if (shouldSkipUrl(originalTargetPath)) {
       return match;
     }
+
+    let resolvedTargetPath = originalTargetPath;
+    // If the path is not absolute (doesn't start with /) and not a data/external URL, resolve it
+    if (!originalTargetPath.startsWith('/') && !originalTargetPath.includes(':')) {
+      try {
+        // Ensure cssFilePath starts with a slash for correct base URL construction for path resolution
+        const baseFilePath = cssFilePath.startsWith('/') ? cssFilePath : '/' + cssFilePath;
+        // Use a dummy base URL; we only care about the pathname resolution.
+        const baseUrl = new URL(baseFilePath, 'file://localhost'); 
+        resolvedTargetPath = new URL(originalTargetPath, baseUrl).pathname;
+        console.log(`🎨 [CSS RelResolve] File: '${cssFilePath}', Original: '${originalTargetPath}', Resolved: '${resolvedTargetPath}'`);
+      } catch (e) {
+        console.warn(`⚠️ [CSS RelResolve] Failed to resolve relative path '${originalTargetPath}' in '${cssFilePath}'. Using original. Error: ${e}`);
+        // If resolution fails, proceed with the original path but it might not be found
+      }
+    }
     
-    const txId = findPathMapping(targetPath, pathLookup);
+    const txId = findPathMapping(resolvedTargetPath, pathLookup);
     if (txId) {
       const arweaveUrl = `https://arweave.net/${txId}`;
-      
       if (isImport) {
-        console.log(`📥 [CSS Import] ${targetPath} -> ${arweaveUrl}`);
-        return match.replace(targetPath, arweaveUrl);
+        console.log(`📥 [CSS Import] '${originalTargetPath}' (resolved to '${resolvedTargetPath}') in '${cssFilePath}' -> ${arweaveUrl}`);
+        return match.replace(originalTargetPath, arweaveUrl); // Replace within the original @import statement
       } else {
-        console.log(`🎨 [CSS URL] ${targetPath} -> ${arweaveUrl}`);
+        console.log(`🎨 [CSS URL] '${originalTargetPath}' (resolved to '${resolvedTargetPath}') in '${cssFilePath}' -> ${arweaveUrl}`);
         return `url(${urlQuote || ''}${arweaveUrl}${urlQuote || ''})`;
       }
     }
@@ -496,11 +495,9 @@ function preprocessCssContent(cssContent: string, fileMapping: Record<string, st
     return match;
   });
   
-  console.log(`🎨 [CSS] Processed CSS file with ${pathLookup.size} potential replacements`);
+  console.log(`🎨 [CSS] Finished processing CSS for: ${cssFilePath}`);
   return updatedCss;
 }
-
-
 
 function createArweaveManifest(fileMapping: Record<string, string>) {
   const paths: Record<string, { id: string }> = {};
