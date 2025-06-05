@@ -4,15 +4,63 @@ import { useState } from 'react';
 
 export default function Home() {
   const [url, setUrl] = useState('');
+  const [urlError, setUrlError] = useState('');
   const [loading, setLoading] = useState(false);
   const [analysis, setAnalysis] = useState<any>(null);
   const [extraction, setExtraction] = useState<any>(null);
   const [deployment, setDeployment] = useState<any>(null);
+  const [domainName, setDomainName] = useState('');
+  const [domainStatus, setDomainStatus] = useState<any>(null);
+  const [arnsAssignment, setArnsAssignment] = useState<any>(null);
+
+  const validateUrl = (inputUrl: string): string => {
+    if (!inputUrl.trim()) {
+      return 'URL is required';
+    }
+    
+    try {
+      const urlObj = new URL(inputUrl);
+      
+      // Only allow HTTP and HTTPS protocols
+      if (urlObj.protocol !== 'http:' && urlObj.protocol !== 'https:') {
+        return 'Only HTTP and HTTPS URLs are allowed';
+      }
+      
+      // Basic domain validation
+      if (!urlObj.hostname || urlObj.hostname.length < 3) {
+        return 'Invalid domain name';
+      }
+      
+      return '';
+    } catch (error) {
+      return 'Please enter a valid URL (e.g., https://example.com)';
+    }
+  };
+
+  const handleUrlChange = (value: string) => {
+    setUrl(value);
+    setUrlError('');
+    
+    // Clear previous results when URL changes
+    if (analysis || extraction || deployment) {
+      setAnalysis(null);
+      setExtraction(null);
+      setDeployment(null);
+      setArnsAssignment(null);
+      setDomainStatus(null);
+    }
+  };
 
   const handleAnalyze = async () => {
-    if (!url) return;
+    const error = validateUrl(url);
+    if (error) {
+      setUrlError(error);
+      return;
+    }
     
     setLoading(true);
+    setUrlError('');
+    
     try {
       const response = await fetch('/api/analyze', {
         method: 'POST',
@@ -69,6 +117,60 @@ export default function Home() {
     }
   };
 
+  const handleCheckDomain = async () => {
+    if (!domainName) return;
+    
+    setLoading(true);
+    try {
+      const response = await fetch('/api/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'check', name: domainName })
+      });
+      
+      const data = await response.json();
+      setDomainStatus(data);
+    } catch (error) {
+      console.error('Domain check failed:', error);
+      setDomainStatus({ available: false, error: 'Failed to check domain' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAssignDomain = async () => {
+    if (!domainName || !deployment?.bundleId) return;
+    
+    setLoading(true);
+    try {
+      const response = await fetch('/api/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          action: 'register', 
+          name: domainName, 
+          target: deployment.bundleId,
+          years: 1
+        })
+      });
+      
+      const data = await response.json();
+      setArnsAssignment(data);
+    } catch (error) {
+      console.error('Domain assignment failed:', error);
+      setArnsAssignment({ success: false, error: 'Failed to assign domain' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Reset domain state when domain name changes
+  const handleDomainNameChange = (value: string) => {
+    setDomainName(value.toLowerCase());
+    setDomainStatus(null);
+    setArnsAssignment(null);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-slate-100">
       {/* Header */}
@@ -105,16 +207,27 @@ export default function Home() {
               <input
                 type="url"
                 value={url}
-                onChange={(e) => setUrl(e.target.value)}
-                placeholder="Enter website URL to archive..."
-                className="w-full pl-10 pr-3 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xs text-sm text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 focus:bg-white transition-all duration-200"
+                onChange={(e) => handleUrlChange(e.target.value)}
+                placeholder="Enter website URL to archive (https://example.com)..."
+                className={`w-full pl-10 pr-3 py-2.5 bg-slate-50/50 border rounded-xs text-sm text-slate-800 placeholder-slate-400 focus:ring-2 focus:bg-white transition-all duration-200 ${
+                  urlError 
+                    ? 'border-red-300 focus:ring-red-500/20 focus:border-red-400' 
+                    : 'border-slate-200 focus:ring-indigo-500/20 focus:border-indigo-300'
+                }`}
               />
+              {urlError && (
+                <div className="absolute top-full left-0 mt-1 flex items-center gap-1 text-xs text-red-600">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {urlError}
+                </div>
+              )}
             </div>
             <button
               onClick={handleAnalyze}
-              disabled={loading || !url}
+              disabled={loading || !url || !!urlError}
               className="px-5 py-2.5 bg-indigo-600 text-white font-medium rounded-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-              style={!loading && url ? {} : { backgroundColor: '#1d1814' }}
             >
               {loading ? (
                 <div className="flex items-center gap-2">
@@ -259,6 +372,166 @@ export default function Home() {
                   <p className="font-semibold text-slate-800">{deployment.totalCost} AR</p>
                 </div>
               </div>
+              
+              {/* ArNS Domain Assignment Section */}
+              <div className="border-t border-slate-200 pt-7">
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="w-8 h-8 bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center rounded-xs">
+                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900">Assign Custom Domain</h4>
+                    <p className="text-xs text-slate-500">Get a friendly .ar-io.dev domain for your site</p>
+                  </div>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="flex-1 relative">
+                      <input
+                        type="text"
+                        value={domainName}
+                        onChange={(e) => handleDomainNameChange(e.target.value)}
+                        placeholder="Enter domain name..."
+                        className="w-full px-4 py-2.5 bg-white border border-slate-200 rounded-xs text-sm text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-300 transition-all duration-200"
+                      />
+                      <div className="absolute inset-y-0 right-3 flex items-center pointer-events-none">
+                        <span className="text-xs text-slate-400">.ar-io.dev</span>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleCheckDomain}
+                      disabled={loading || !domainName}
+                      className="px-4 py-2.5 bg-blue-600 text-white font-medium rounded-xs hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                    >
+                      {loading ? 'Checking...' : 'Check Availability'}
+                    </button>
+                  </div>
+                  
+                  {domainStatus && (
+                    <div className={`p-3 rounded-xs border ${
+                      domainStatus.available && domainStatus.valid
+                        ? 'bg-green-50 border-green-200 text-green-800'
+                        : 'bg-red-50 border-red-200 text-red-800'
+                    }`}>
+                      <div className="flex items-center gap-2">
+                        {domainStatus.available && domainStatus.valid ? (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                            </svg>
+                            <span className="text-sm font-medium">
+                              {domainName}.ar-io.dev is available!
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                            </svg>
+                            <span className="text-sm font-medium">
+                              {domainStatus.error || `${domainName}.ar-io.dev is not available`}
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {domainStatus?.available && domainStatus?.valid && (
+                    <button
+                      onClick={handleAssignDomain}
+                      disabled={loading}
+                      className="inline-flex items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-blue-600 to-purple-600 text-white font-medium rounded-xs hover:from-blue-700 hover:to-purple-700 disabled:opacity-50 transition-all duration-200 text-sm"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                      </svg>
+                      {loading ? 'Registering...' : 'Register Domain'}
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {arnsAssignment && (
+            <div className="bg-white/80 backdrop-blur-xl border border-slate-200 rounded-xs p-8 transform transition-all duration-500">
+              <div className="flex items-center gap-4 mb-7">
+                <div className={`w-12 h-12 ${arnsAssignment.success ? 'bg-green-600' : 'bg-red-600'} flex items-center justify-center rounded-xs`}>
+                  {arnsAssignment.success ? (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9" />
+                    </svg>
+                  ) : (
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  )}
+                </div>
+                <div>
+                  <h3 className="text-xl font-bold text-slate-900">
+                    {arnsAssignment.success ? 'Domain Registered!' : 'Registration Failed'}
+                  </h3>
+                  <p className="text-sm text-slate-600 mt-1">
+                    {arnsAssignment.success 
+                      ? 'Your custom domain is now live' 
+                      : 'Failed to register domain'}
+                  </p>
+                </div>
+              </div>
+              
+              {arnsAssignment.success ? (
+                <div className="space-y-4">
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xs">
+                    <span className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-2">Custom Domain</span>
+                    <a 
+                      href={arnsAssignment.registrationUrl} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 text-blue-600 hover:text-blue-700 font-medium hover:underline transition-colors text-sm"
+                    >
+                      <span>{arnsAssignment.registrationUrl}</span>
+                      <svg className="w-3 h-3 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </a>
+                  </div>
+                  
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-xs">
+                    <span className="text-xs font-medium text-slate-500 uppercase tracking-wide block mb-2">Registration Transaction</span>
+                    <p className="text-xs font-mono text-slate-800 bg-white px-3 py-2 border border-slate-200 rounded-xs break-all">{arnsAssignment.transactionId}</p>
+                  </div>
+                  
+                  <div className="p-3 bg-blue-50 border border-blue-200 rounded-xs">
+                    <div className="flex items-start gap-2">
+                      <svg className="w-4 h-4 text-blue-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                      </svg>
+                      <div>
+                        <p className="text-sm font-medium text-blue-800">Domain Registration Complete</p>
+                        <p className="text-xs text-blue-600 mt-1">
+                          Your site is now accessible via the custom domain. DNS propagation may take a few minutes.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 bg-red-50 border border-red-200 rounded-xs">
+                  <div className="flex items-start gap-2">
+                    <svg className="w-4 h-4 text-red-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-medium text-red-800">Registration Error</p>
+                      <p className="text-xs text-red-600 mt-1">{arnsAssignment.error}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -268,11 +541,11 @@ export default function Home() {
           <div className="text-center mb-10">
             <h2 className="text-2xl font-bold text-slate-900 mb-4">How Permasquare Works</h2>
             <p className="text-slate-600 max-w-xl mx-auto">
-              Our three-step process ensures your website is permanently preserved on the Arweave network
+              Our four-step process ensures your website is permanently preserved with a friendly domain
             </p>
           </div>
           
-          <div className="grid md:grid-cols-3 gap-8">
+          <div className="grid md:grid-cols-4 gap-6">
             <div className="text-center group">
               <div className="relative mb-6">
                 <div className="w-16 h-16 bg-blue-500 flex items-center justify-center mx-auto rounded-xs group-hover:scale-105 transition-all duration-300">
@@ -321,6 +594,23 @@ export default function Home() {
               <h3 className="font-bold text-slate-900 mb-3">Deploy</h3>
               <p className="text-sm text-slate-600 leading-relaxed">
                 Turbo-powered bundling uploads your site permanently to Arweave
+              </p>
+            </div>
+            
+            <div className="text-center group">
+              <div className="relative mb-6">
+                <div className="w-16 h-16 bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center mx-auto rounded-xs group-hover:scale-105 transition-all duration-300">
+                  <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9" />
+                  </svg>
+                </div>
+                <div className="absolute -top-1 -right-1 w-6 h-6 bg-white flex items-center justify-center border border-blue-200 rounded-xs">
+                  <span className="text-xs font-bold text-blue-600">4</span>
+                </div>
+              </div>
+              <h3 className="font-bold text-slate-900 mb-3">Assign Domain</h3>
+              <p className="text-sm text-slate-600 leading-relaxed">
+                Get a friendly .ar-io.dev domain for easy access to your preserved site
               </p>
             </div>
           </div>

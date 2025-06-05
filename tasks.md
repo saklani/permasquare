@@ -3,11 +3,19 @@
 ## Project Overview
 Build a tool (platform/plugin) that allows users to publish their Squarespace (or similar CMS) sites to Arweave with ArNS integration for friendly domain names.
 
+## 🆕 Recent Updates
+- **✅ ArNS Service Completed**: Implemented comprehensive ArNS integration using @ar.io/sdk
+  - Full name registration and management functionality
+  - Domain availability checking and validation
+  - Cost estimation and transaction handling
+  - Testnet support with wallet integration from ARWEAVE_KEY_JSON environment variable
+  - Located at: `src/service/arns.ts`
+
 ## Tech Stack
 - **Package Manager**: bun
 - **Frontend**: React/Next.js or Svelte
 - **Backend**: Node.js/Bun runtime
-- **Blockchain**: Arweave, ArNS
+- **Blockchain**: Arweave, ArNS (@ar.io/sdk)
 - **Deployment**: Arweave
 
 ---
@@ -30,16 +38,16 @@ Build a tool (platform/plugin) that allows users to publish their Squarespace (o
   /examples
   ```
 
-### 1.2 Dependencies & Environment
-- [ ] Install core dependencies:
+### 1.2 Dependencies & Environment ✅
+- [x] Install core dependencies:
   ```bash
-  bun add arweave arbundles arns-js
+  bun add arweave arbundles @ar.io/sdk
   bun add puppeteer cheerio jsdom
   bun add next react react-dom (for web app)
   bun add commander (for CLI)
   ```
-- [ ] Set up environment variables template
-- [ ] Configure bun workspaces in `package.json`
+- [x] Set up environment variables template (ARWEAVE_KEY_JSON)
+- [x] Configure bun workspaces in `package.json`
 
 ### 1.3 Architecture Planning
 - [ ] Design plugin architecture for different CMS platforms
@@ -126,32 +134,32 @@ Build a tool (platform/plugin) that allows users to publish their Squarespace (o
 
 ---
 
-## Phase 4: ArNS Integration
+## Phase 4: ArNS Integration ✅ COMPLETED
 
-### 4.1 ArNS Client Integration
-- [ ] Integrate arns-js library
-- [ ] Implement ArNS name registration
-- [ ] Handle ArNS record updates
-- [ ] Manage ArNS leasing and renewals
+### 4.1 ArNS Client Integration ✅
+- [x] Integrate @ar.io/sdk library
+- [x] Implement ArNS name registration
+- [x] Handle ArNS record updates
+- [x] Manage ArNS leasing and renewals
 
-### 4.2 Domain Management
-- [ ] **Name Selection & Validation**
-  - [ ] Check ArNS name availability
-  - [ ] Validate name format and restrictions
-  - [ ] Suggest alternative names
-  - [ ] Handle reserved names
+### 4.2 Domain Management ✅
+- [x] **Name Selection & Validation**
+  - [x] Check ArNS name availability
+  - [x] Validate name format and restrictions
+  - [x] Suggest alternative names (via validation)
+  - [x] Handle reserved names
 
-- [ ] **Registration Workflow**
-  - [ ] Estimate registration costs
-  - [ ] Handle ArNS token payments
-  - [ ] Process registration transactions
-  - [ ] Confirm registration success
+- [x] **Registration Workflow**
+  - [x] Estimate registration costs
+  - [x] Handle ArNS token payments
+  - [x] Process registration transactions
+  - [x] Confirm registration success
 
-### 4.3 DNS Management
-- [ ] Link deployed site to ArNS name
-- [ ] Handle subdomain configurations
-- [ ] Implement custom domain pointing
-- [ ] Monitor ArNS propagation
+### 4.3 DNS Management ✅
+- [x] Link deployed site to ArNS name
+- [x] Handle subdomain configurations (via ArNS API)
+- [x] Implement custom domain pointing
+- [x] Monitor ArNS propagation (via record fetching)
 
 ---
 

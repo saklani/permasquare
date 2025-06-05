@@ -239,73 +239,86 @@ interface ReplacementContext {
 function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>): string {
   // Step 1: Build optimized path lookup with all variations
   const pathLookup = buildPathLookup(fileMapping);
-  
-  // Step 2: Single-pass replacement using comprehensive regex
   let updated = html;
   
-  // Combined regex pattern to match all URL contexts in one pass
-  const urlPattern = /((?:href|src|action|data-src|data-href|content|srcset)=["'])([^"']*)(["'])|(?:url\()(["']?)([^)'"]*)\4(\))|(?:import\s*\()(["'])([^"']*)\7(\))/g;
+  console.log(`🔗 [URL Replace] Starting replacement for ${Object.keys(fileMapping).length} files`);
   
-  updated = updated.replace(urlPattern, (match, attrPrefix, attrValue, attrSuffix, cssQuote1, cssValue, cssSuffix, jsPrefix, jsValue, jsSuffix) => {
-    let url: string;
-    let isAttribute = false;
-    let isCss = false;
-    let isJs = false;
-    
-    if (attrPrefix && attrValue !== undefined) {
-      // HTML attribute
-      url = attrValue;
-      isAttribute = true;
-    } else if (cssValue !== undefined) {
-      // CSS url()
-      url = cssValue;
-      isCss = true;
-    } else if (jsValue !== undefined) {
-      // JavaScript dynamic import
-      url = jsValue;
-      isJs = true;
-    } else {
-      return match;
-    }
-    
-    // Skip external URLs and data URIs
+  // Step 2: Replace HTML attribute URLs (href, src, action, etc.)
+  const htmlAttrPattern = /((?:href|src|action|data-src|data-href|content)=)(["'])([^"']*?)\2/g;
+  updated = updated.replace(htmlAttrPattern, (match, attrName, quote, url) => {
     if (shouldSkipUrl(url)) {
       return match;
     }
     
-    // Find replacement
     const txId = findPathMapping(url, pathLookup);
-    if (!txId) {
-      return match;
-    }
-    
-    const arweaveUrl = `https://arweave.net/${txId}`;
-    
-    // Return appropriate replacement based on context
-    if (isAttribute) {
-      if (attrPrefix.includes('srcset=')) {
-        // Handle srcset with multiple URLs
-        const updatedSrcset = attrValue.replace(/([^\s,]+)/g, (srcUrl: string) => {
-          const srcTxId = findPathMapping(srcUrl.split(' ')[0], pathLookup);
-          return srcTxId ? `https://arweave.net/${srcTxId}${srcUrl.includes(' ') ? ' ' + srcUrl.split(' ').slice(1).join(' ') : ''}` : srcUrl;
-        });
-        return `${attrPrefix}${updatedSrcset}${attrSuffix}`;
-      } else {
-        return `${attrPrefix}${arweaveUrl}${attrSuffix}`;
-      }
-    } else if (isCss) {
-      return `url(${cssQuote1 || ''}${arweaveUrl}${cssQuote1 || ''})`;
-    } else if (isJs) {
-      return `${jsPrefix}${jsValue.charAt(0)}${arweaveUrl}${jsValue.charAt(0)}${jsSuffix}`;
+    if (txId) {
+      const arweaveUrl = `https://arweave.net/${txId}`;
+      console.log(`🔗 [HTML Attr] ${url} -> ${arweaveUrl}`);
+      return `${attrName}${quote}${arweaveUrl}${quote}`;
     }
     
     return match;
   });
   
-  // Step 3: Handle any remaining JSON references (for manifests, configs)
+  // Step 3: Handle srcset attributes separately (they can contain multiple URLs)
+  const srcsetPattern = /(srcset=)(["'])([^"']*?)\2/g;
+  updated = updated.replace(srcsetPattern, (match, attrName, quote, srcsetValue) => {
+    const updatedSrcset = srcsetValue.replace(/(\S+?)(\s+[0-9]+[wx]?)?(?=\s*,|\s*$)/g, (urlMatch: string, url: string, descriptor: string = '') => {
+      if (shouldSkipUrl(url)) {
+        return urlMatch;
+      }
+      
+      const txId = findPathMapping(url, pathLookup);
+      if (txId) {
+        const arweaveUrl = `https://arweave.net/${txId}`;
+        console.log(`🔗 [Srcset] ${url} -> ${arweaveUrl}`);
+        return `${arweaveUrl}${descriptor}`;
+      }
+      
+      return urlMatch;
+    });
+    
+    return `${attrName}${quote}${updatedSrcset}${quote}`;
+  });
+  
+  // Step 4: Replace CSS url() references
+  const cssUrlPattern = /url\s*\(\s*(["']?)([^"'\)]*?)\1\s*\)/g;
+  updated = updated.replace(cssUrlPattern, (match, quote, url) => {
+    if (shouldSkipUrl(url)) {
+      return match;
+    }
+    
+    const txId = findPathMapping(url, pathLookup);
+    if (txId) {
+      const arweaveUrl = `https://arweave.net/${txId}`;
+      console.log(`🔗 [CSS url()] ${url} -> ${arweaveUrl}`);
+      return `url(${quote}${arweaveUrl}${quote})`;
+    }
+    
+    return match;
+  });
+  
+  // Step 5: Replace JavaScript dynamic imports
+  const jsImportPattern = /(import\s*\(\s*)(["'])([^"']*?)\2(\s*\))/g;
+  updated = updated.replace(jsImportPattern, (match, importPrefix, quote, url, importSuffix) => {
+    if (shouldSkipUrl(url)) {
+      return match;
+    }
+    
+    const txId = findPathMapping(url, pathLookup);
+    if (txId) {
+      const arweaveUrl = `https://arweave.net/${txId}`;
+      console.log(`🔗 [JS Import] ${url} -> ${arweaveUrl}`);
+      return `${importPrefix}${quote}${arweaveUrl}${quote}${importSuffix}`;
+    }
+    
+    return match;
+  });
+  
+  // Step 6: Handle any remaining JSON references (for manifests, configs)
   updated = replaceJsonReferences(updated, pathLookup);
   
-  console.log(`🔗 [URL Replace] Processed content with ${Object.keys(fileMapping).length} files mapped`);
+  console.log(`🔗 [URL Replace] Completed processing`);
   return updated;
 }
 
@@ -329,113 +342,219 @@ function buildPathLookup(fileMapping: Record<string, string>): Map<string, strin
 function generatePathVariations(path: string): string[] {
   const variations = new Set<string>();
   
-  // Normalize path
-  const normalizedPath = path.replace(/\/+/g, '/');
+  // Normalize path - remove double slashes and trailing slashes (except root)
+  let normalizedPath = path.replace(/\/+/g, '/');
+  if (normalizedPath.length > 1 && normalizedPath.endsWith('/')) {
+    normalizedPath = normalizedPath.slice(0, -1);
+  }
   variations.add(normalizedPath);
   
   // Without leading slash
   if (normalizedPath.startsWith('/')) {
-    variations.add(normalizedPath.substring(1));
+    const withoutLeading = normalizedPath.substring(1);
+    if (withoutLeading) {
+      variations.add(withoutLeading);
+    }
   }
   
   // With leading slash (if doesn't have one)
-  if (!normalizedPath.startsWith('/')) {
+  if (!normalizedPath.startsWith('/') && normalizedPath) {
     variations.add('/' + normalizedPath);
   }
   
   // For HTML files, add variations without .html extension
   if (normalizedPath.endsWith('.html')) {
     const withoutExt = normalizedPath.replace(/\.html$/, '');
-    variations.add(withoutExt);
-    if (withoutExt.startsWith('/')) {
-      variations.add(withoutExt.substring(1));
-    }
-    if (!withoutExt.startsWith('/')) {
-      variations.add('/' + withoutExt);
+    if (withoutExt) {
+      variations.add(withoutExt);
+      if (withoutExt.startsWith('/')) {
+        const withoutLeadingSlash = withoutExt.substring(1);
+        if (withoutLeadingSlash) {
+          variations.add(withoutLeadingSlash);
+        }
+      } else {
+        variations.add('/' + withoutExt);
+      }
     }
   }
   
-  // For index.html, add directory variations
+  // For index.html files, add directory variations
   if (normalizedPath.endsWith('/index.html')) {
     const dirPath = normalizedPath.replace('/index.html', '/');
     variations.add(dirPath);
-    variations.add(dirPath.slice(0, -1)); // without trailing slash
     
+    // Directory without trailing slash
     if (dirPath !== '/') {
-      variations.add(dirPath.substring(1)); // without leading slash
-      variations.add(dirPath.substring(1).slice(0, -1)); // without leading and trailing slash
+      const dirWithoutSlash = dirPath.slice(0, -1);
+      variations.add(dirWithoutSlash);
+      
+      // Also without leading slash
+      if (dirWithoutSlash.startsWith('/')) {
+        const relative = dirWithoutSlash.substring(1);
+        if (relative) {
+          variations.add(relative);
+        }
+      }
+    }
+    
+    // Directory without leading slash
+    if (dirPath.startsWith('/') && dirPath !== '/') {
+      variations.add(dirPath.substring(1));
+    }
+  } else if (normalizedPath.endsWith('index.html')) {
+    // Handle case where it's just "index.html" (root index)
+    variations.add('/');
+    variations.add('');
+  }
+  
+  // For paths without extension that might be HTML files
+  if (!normalizedPath.includes('.') && normalizedPath) {
+    variations.add(normalizedPath + '.html');
+    if (!normalizedPath.startsWith('/')) {
+      variations.add('/' + normalizedPath + '.html');
+    } else {
+      const withoutSlash = normalizedPath.substring(1);
+      if (withoutSlash) {
+        variations.add(withoutSlash + '.html');
+      }
+    }
+    
+    // Also try as index.html in directory
+    variations.add(normalizedPath + '/index.html');
+    if (!normalizedPath.startsWith('/')) {
+      variations.add('/' + normalizedPath + '/index.html');
+    } else {
+      const withoutSlash = normalizedPath.substring(1);
+      if (withoutSlash) {
+        variations.add(withoutSlash + '/index.html');
+      }
     }
   }
   
-  // For files without extension in root, try with .html
-  if (!normalizedPath.includes('.') && !normalizedPath.includes('/')) {
-    variations.add(normalizedPath + '.html');
-    variations.add('/' + normalizedPath + '.html');
-  }
+  // Remove empty strings and duplicates
+  const filtered = Array.from(variations).filter(v => v !== '');
   
-  return Array.from(variations);
+  console.log(`🔗 [Path Variations] Generated ${filtered.length} variations for '${path}':`, filtered);
+  return filtered;
 }
 
 function findPathMapping(url: string, pathLookup: Map<string, string>): string | null {
-  // Clean URL (remove query params and fragments)
-  const cleanUrl = url.split('?')[0].split('#')[0].trim();
+  // Clean URL (remove query params and fragments) and decode URL encoding
+  let cleanUrl = url.split('?')[0].split('#')[0].trim();
   
-  if (!cleanUrl || cleanUrl === '/') {
-    return pathLookup.get('/index.html') || pathLookup.get('index.html') || null;
+  // Decode URL encoding
+  try {
+    cleanUrl = decodeURIComponent(cleanUrl);
+  } catch (error) {
+    console.warn(`⚠️ [URL Decode] Failed to decode URL '${cleanUrl}', using as-is`);
   }
   
-  // Direct lookup
+  if (!cleanUrl) {
+    return null;
+  }
+  
+  // Handle root path
+  if (cleanUrl === '/' || cleanUrl === '') {
+    const rootOptions = ['/index.html', 'index.html', '/'];
+    for (const option of rootOptions) {
+      if (pathLookup.has(option)) {
+        return pathLookup.get(option)!;
+      }
+    }
+    return null;
+  }
+  
+  // Direct lookup first
   if (pathLookup.has(cleanUrl)) {
-    return pathLookup.get(cleanUrl)!;
+    const txId = pathLookup.get(cleanUrl)!;
+    console.log(`🎯 [Path Found] Direct match: '${cleanUrl}' -> ${txId}`);
+    return txId;
   }
   
   // Try path variations
   const variations = generatePathVariations(cleanUrl);
   for (const variation of variations) {
     if (pathLookup.has(variation)) {
-      return pathLookup.get(variation)!;
+      const txId = pathLookup.get(variation)!;
+      console.log(`🎯 [Path Found] Variation match: '${cleanUrl}' via '${variation}' -> ${txId}`);
+      return txId;
     }
   }
   
-  // Fallback: try relative path resolution
-  const relativePath = cleanUrl.replace(/^\.?\/+/, '');
-  if (relativePath !== cleanUrl && pathLookup.has(relativePath)) {
-    return pathLookup.get(relativePath)!;
+  // Fallback: try removing leading dots and slashes
+  const cleanedPath = cleanUrl.replace(/^\.?\/+/, '');
+  if (cleanedPath !== cleanUrl && cleanedPath) {
+    if (pathLookup.has(cleanedPath)) {
+      const txId = pathLookup.get(cleanedPath)!;
+      console.log(`🎯 [Path Found] Cleaned match: '${cleanUrl}' via '${cleanedPath}' -> ${txId}`);
+      return txId;
+    }
   }
   
+  console.warn(`⚠️ [Path Not Found] No mapping found for: '${cleanUrl}'`);
   return null;
 }
 
 function shouldSkipUrl(url: string): boolean {
   if (!url || url.trim() === '') return true;
   
+  const trimmedUrl = url.trim();
+  
   const skipPatterns = [
-    /^https?:\/\//,           // External URLs
-    /^\/\//,                  // Protocol-relative URLs
-    /^#/,                     // Anchors
-    /^mailto:/,               // Email links
-    /^tel:/,                  // Phone links
-    /^data:/,                 // Data URIs
-    /^javascript:/,           // JavaScript URIs
-    /^blob:/,                 // Blob URLs
-    /arweave\.net/,           // Already processed
-    /^[\w-]+:\/\//           // Other protocols
+    /^https?:\/\//i,         // External URLs (case insensitive)
+    /^\/\//,                 // Protocol-relative URLs
+    /^#/,                    // Anchors
+    /^mailto:/i,             // Email links
+    /^tel:/i,                // Phone links
+    /^data:/i,               // Data URIs
+    /^javascript:/i,         // JavaScript URIs
+    /^blob:/i,               // Blob URLs
+    /^about:/i,              // About URIs
+    /^chrome:/i,             // Chrome URIs
+    /^moz-extension:/i,      // Firefox extension URIs
+    /^chrome-extension:/i,   // Chrome extension URIs
+    /arweave\.net/i,         // Already processed Arweave URLs
+    /^[\w-]+:\/\//          // Other protocols
   ];
   
-  return skipPatterns.some(pattern => pattern.test(url));
+  // Also skip if it looks like a CDN or external domain
+  const externalDomainPatterns = [
+    /^\/\/[^\/]+\./,         // Protocol-relative with domain
+    /fonts\.googleapis\.com/i,
+    /fonts\.gstatic\.com/i,
+    /ajax\.googleapis\.com/i,
+    /code\.jquery\.com/i,
+    /cdn\./i,
+    /amazonaws\.com/i
+  ];
+  
+  return skipPatterns.some(pattern => pattern.test(trimmedUrl)) ||
+         externalDomainPatterns.some(pattern => pattern.test(trimmedUrl));
 }
 
 function replaceJsonReferences(content: string, pathLookup: Map<string, string>): string {
   // Handle JSON-like references in manifests, service workers, etc.
-  const jsonPattern = /"([^"]*\.[a-zA-Z0-9]{1,5})"/g;
+  // Look for quoted strings that look like file paths (contain common file extensions)
+  const jsonPattern = /"([^"]*\.(?:html|htm|css|js|mjs|jsx|ts|tsx|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|eot|otf|json|xml|txt|pdf|mp4|mp3|wav|ogg)(?:\?[^"]*)?(?:#[^"]*)?)"/g;
   
   return content.replace(jsonPattern, (match, path) => {
-    if (shouldSkipUrl(path)) {
+    // Clean the path (remove query params and fragments for lookup)
+    const cleanPath = path.split('?')[0].split('#')[0];
+    
+    if (shouldSkipUrl(cleanPath)) {
       return match;
     }
     
-    const txId = findPathMapping(path, pathLookup);
-    return txId ? `"https://arweave.net/${txId}"` : match;
+    const txId = findPathMapping(cleanPath, pathLookup);
+    if (txId) {
+      const arweaveUrl = `https://arweave.net/${txId}`;
+      console.log(`🔗 [JSON Ref] ${path} -> ${arweaveUrl}`);
+      // Preserve query params and fragments if they exist
+      const queryAndFragment = path.substring(cleanPath.length);
+      return `"${arweaveUrl}${queryAndFragment}"`;
+    }
+    
+    return match;
   });
 }
 
@@ -463,51 +582,39 @@ function preprocessCssContent(cssContent: string, fileMapping: Record<string, st
   const pathLookup = buildPathLookup(fileMapping);
   let updatedCss = cssContent;
   
-  const cssUrlPattern = /(@import\s+(?:url\()?['"](.*?)['"](?:\))?)|(?:url\((['"]?)(.*?)\3\))/g;
-  
-  updatedCss = updatedCss.replace(cssUrlPattern, (match, importMatch, importPath, urlQuote, urlPath) => {
-    let originalTargetPath: string;
-    let isImport = false;
-    
-    if (importMatch && importPath) {
-      originalTargetPath = importPath;
-      isImport = true;
-    } else if (urlPath !== undefined) {
-      originalTargetPath = urlPath;
-    } else {
-      return match; // Should not happen with the given regex
-    }
-    
-    if (shouldSkipUrl(originalTargetPath)) {
+  // Handle @import statements
+  const importPattern = /@import\s+(?:url\s*\(\s*)?(["'])([^"']*?)\1(?:\s*\))?/g;
+  updatedCss = updatedCss.replace(importPattern, (match, quote, importPath) => {
+    if (shouldSkipUrl(importPath)) {
       return match;
     }
 
-    let resolvedTargetPath = originalTargetPath;
-    // If the path is not absolute (doesn't start with /) and not a data/external URL, resolve it
-    if (!originalTargetPath.startsWith('/') && !originalTargetPath.includes(':')) {
-      try {
-        // Ensure cssFilePath starts with a slash for correct base URL construction for path resolution
-        const baseFilePath = cssFilePath.startsWith('/') ? cssFilePath : '/' + cssFilePath;
-        // Use a dummy base URL; we only care about the pathname resolution.
-        const baseUrl = new URL(baseFilePath, 'file://localhost'); 
-        resolvedTargetPath = new URL(originalTargetPath, baseUrl).pathname;
-        console.log(`🎨 [CSS RelResolve] File: '${cssFilePath}', Original: '${originalTargetPath}', Resolved: '${resolvedTargetPath}'`);
-      } catch (e) {
-        console.warn(`⚠️ [CSS RelResolve] Failed to resolve relative path '${originalTargetPath}' in '${cssFilePath}'. Using original. Error: ${e}`);
-        // If resolution fails, proceed with the original path but it might not be found
-      }
-    }
+         const resolvedPath = resolveRelativeUrl(importPath, cssFilePath);
+    const txId = findPathMapping(resolvedPath, pathLookup);
     
-    const txId = findPathMapping(resolvedTargetPath, pathLookup);
     if (txId) {
       const arweaveUrl = `https://arweave.net/${txId}`;
-      if (isImport) {
-        console.log(`📥 [CSS Import] '${originalTargetPath}' (resolved to '${resolvedTargetPath}') in '${cssFilePath}' -> ${arweaveUrl}`);
-        return match.replace(originalTargetPath, arweaveUrl); // Replace within the original @import statement
-      } else {
-        console.log(`🎨 [CSS URL] '${originalTargetPath}' (resolved to '${resolvedTargetPath}') in '${cssFilePath}' -> ${arweaveUrl}`);
-        return `url(${urlQuote || ''}${arweaveUrl}${urlQuote || ''})`;
-      }
+      console.log(`📥 [CSS Import] '${importPath}' (resolved to '${resolvedPath}') in '${cssFilePath}' -> ${arweaveUrl}`);
+      return match.replace(importPath, arweaveUrl);
+    }
+    
+    return match;
+  });
+  
+  // Handle url() references
+  const urlPattern = /url\s*\(\s*(["']?)([^"'\)]*?)\1\s*\)/g;
+  updatedCss = updatedCss.replace(urlPattern, (match, quote, urlPath) => {
+    if (shouldSkipUrl(urlPath)) {
+      return match;
+    }
+
+         const resolvedPath = resolveRelativeUrl(urlPath, cssFilePath);
+    const txId = findPathMapping(resolvedPath, pathLookup);
+    
+    if (txId) {
+      const arweaveUrl = `https://arweave.net/${txId}`;
+      console.log(`🎨 [CSS URL] '${urlPath}' (resolved to '${resolvedPath}') in '${cssFilePath}' -> ${arweaveUrl}`);
+      return `url(${quote}${arweaveUrl}${quote})`;
     }
     
     return match;
@@ -515,6 +622,29 @@ function preprocessCssContent(cssContent: string, fileMapping: Record<string, st
   
   console.log(`🎨 [CSS] Finished processing CSS for: ${cssFilePath}`);
   return updatedCss;
+}
+
+function resolveRelativeUrl(url: string, basePath: string): string {
+  // If the URL is already absolute (starts with /) or contains a protocol, return as-is
+  if (url.startsWith('/') || url.includes(':')) {
+    return url;
+  }
+  
+  try {
+    // Ensure basePath starts with a slash for correct URL resolution
+    const normalizedBasePath = basePath.startsWith('/') ? basePath : '/' + basePath;
+    
+    // Use URL constructor to resolve relative paths
+    const baseUrl = new URL(normalizedBasePath, 'file://localhost');
+    const resolvedUrl = new URL(url, baseUrl);
+    const resolvedPath = resolvedUrl.pathname;
+    
+    console.log(`🔗 [Path Resolve] Base: '${basePath}', Relative: '${url}', Resolved: '${resolvedPath}'`);
+    return resolvedPath;
+  } catch (error) {
+    console.warn(`⚠️ [Path Resolve] Failed to resolve '${url}' relative to '${basePath}'. Using original. Error: ${error}`);
+    return url;
+  }
 }
 
 function createArweaveManifest(fileMapping: Record<string, string>) {

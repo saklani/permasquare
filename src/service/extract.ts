@@ -123,8 +123,9 @@ export async function crawlAndSave(
     }
   }
 
+  await cleanup();
   console.log(`✅ [Crawl] Complete. Saved ${savedPages.length} pages and ${savedAssets.length} assets`);
-
+  
   return {
     savedPages,
     totalPages: savedPages.length,
@@ -337,6 +338,7 @@ export async function analyzeSite(url: string): Promise<SiteAnalysis> {
     };
   } finally {
     await page.close();
+    await cleanup();
   }
 }
 
