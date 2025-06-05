@@ -45,7 +45,9 @@ export function createArIOClient(wallet?: any): any {
   }
   
   // Read-only client without signer
-  return ARIO.testnet();
+  return ARIO.testnet({
+    processId: 'agYcCFJtrMG6cqMuZfskIkFTGvUPddICmtQSBIoPdiA'
+  });
 }
 
 export async function checkNameAvailability(name: string): Promise<{
@@ -62,7 +64,7 @@ export async function checkNameAvailability(name: string): Promise<{
       const nameInfo = await arIO.getArNSRecord({ 
         name,
         // Use testnet ArNS registry process ID
-        processId: 'bLAgYxAdX2Ry-nt6aH2ixgfFBXTKiuoFHFF6gyHpDNI'
+        processId: 'agYcCFJtrMG6cqMuZfskIkFTGvUPddICmtQSBIoPdiA'
       });
       
       // If record is undefined or null, name is available
@@ -121,10 +123,11 @@ export async function estimateRegistrationCost(
       name,
       years,
       // Use testnet ArNS registry process ID
-      processId: 'bLAgYxAdX2Ry-nt6aH2ixgfFBXTKiuoFHFF6gyHpDNI'
+      processId: 'agYcCFJtrMG6cqMuZfskIkFTGvUPddICmtQSBIoPdiA'
     });
-    
-    const costInIOTokens = costDetails.tokenCost;
+    console.log('💰 [ArNS] Cost details:', costDetails);
+    const costInIOTokens = costDetails;
+    console.log('💰 [ArNS] Cost in IOTokens:', costInIOTokens);
     // Convert IO tokens to AR (this is an approximation, actual rate may vary)
     const costInAR = costInIOTokens * 0.001; // Approximate conversion rate
     
@@ -174,7 +177,7 @@ export async function registerArnsName(
       target: options.target,
       years: options.years || 1,
       // Use testnet ArNS registry process ID
-      processId: options.processId || 'bLAgYxAdX2Ry-nt6aH2ixgfFBXTKiuoFHFF6gyHpDNI'
+      processId: options.processId || 'agYcCFJtrMG6cqMuZfskIkFTGvUPddICmtQSBIoPdiA'
     });
     
     const registrationUrl = `https://${options.name}.ar-io.dev`;
@@ -222,7 +225,7 @@ export async function updateArnsRecord(
       name,
       target: newTarget,
       // Use testnet ArNS registry process ID
-      processId: 'bLAgYxAdX2Ry-nt6aH2ixgfFBXTKiuoFHFF6gyHpDNI'
+      processId: 'agYcCFJtrMG6cqMuZfskIkFTGvUPddICmtQSBIoPdiA'
     });
     
     const updateUrl = `https://${name}.ar-io.dev`;
@@ -251,7 +254,7 @@ export async function getArnsRecord(name: string): Promise<ArnsNameInfo | null> 
     const record = await arIO.getArNSRecord({ 
       name,
       // Use testnet ArNS registry process ID
-      processId: 'bLAgYxAdX2Ry-nt6aH2ixgfFBXTKiuoFHFF6gyHpDNI'
+      processId: 'agYcCFJtrMG6cqMuZfskIkFTGvUPddICmtQSBIoPdiA'
     });
     
     return {
