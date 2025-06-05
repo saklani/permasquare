@@ -1,0 +1,14 @@
+{
+  "functions": {
+    "app/api/extract/route.ts": {
+      "maxDuration": 30
+    },
+    "app/api/*/route.ts": {
+      "maxDuration": 30
+    }
+  },
+  "env": {
+    "PUPPETEER_SKIP_CHROMIUM_DOWNLOAD": "true",
+    "PUPPETEER_EXECUTABLE_PATH": "/var/task/node_modules/@sparticuz/chromium/bin"
+  }
+} 

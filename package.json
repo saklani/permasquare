@@ -11,12 +11,14 @@
   "dependencies": {
     "@ardrive/turbo-sdk": "^1.26.0",
     "@aws-sdk/client-s3": "^3.824.0",
+    "@sparticuz/chromium": "^133.0.0",
+    "@tailwindcss/postcss": "^4.1.8",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "arweave": "^1.15.7",
     "cheerio": "^1.0.0",
     "next": "15.3.3",
-    "puppeteer": "^24.10.0",
+    "puppeteer-core": "^24.10.0",
     "react": "^18",
     "react-dom": "^18"
   },

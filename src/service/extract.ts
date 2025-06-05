@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
-import { Browser, launch } from 'puppeteer';
+import { Browser, launch } from 'puppeteer-core';
+import chromium from '@sparticuz/chromium';
 import { URL } from 'url';
 import { saveFile } from './storage';
 
@@ -29,9 +30,9 @@ export async function crawlAndSave(
   options: { maxPages?: number; delay?: number } = {}
 ): Promise<ExtractionResult> {
   const { maxPages = 100, delay = 1000 } = options;
-  
+
   console.log(`🚀 [Crawl] Starting crawl for: ${startUrl}`);
-  
+
   const browser = await getBrowser();
   const visited = new Set<string>();
   const queue = [startUrl];
@@ -41,7 +42,7 @@ export async function crawlAndSave(
 
   while (queue.length > 0 && savedPages.length < maxPages) {
     const currentUrl = queue.shift()!;
-    
+
     if (visited.has(currentUrl)) continue;
     visited.add(currentUrl);
 
@@ -49,7 +50,7 @@ export async function crawlAndSave(
 
     try {
       const page = await browser.newPage();
-      
+
       try {
         await page.goto(currentUrl, { waitUntil: 'networkidle2', timeout: 15000 });
         const content = await page.content();
@@ -63,7 +64,7 @@ export async function crawlAndSave(
           // Add .html extension to files without an extension
           const lastSlashIndex = s3Key.lastIndexOf('/');
           const filename = lastSlashIndex !== -1 ? s3Key.substring(lastSlashIndex + 1) : s3Key;
-          
+
           // Check if filename has an extension (contains a dot after the last slash)
           if (!filename.includes('.')) {
             s3Key += '.html';
@@ -71,7 +72,7 @@ export async function crawlAndSave(
         }
         console.log(`💾 [Save] Saving to S3 with key: ${s3Key}`);
         await saveFile(s3Key, content, 'text/html');
-        
+
         const pageSize = Buffer.byteLength(content, 'utf8');
         console.log(`✅ [Save] Page saved: ${currentUrl} (${pageSize} bytes)`);
         savedPages.push(currentUrl);
@@ -84,7 +85,7 @@ export async function crawlAndSave(
         $('a[href]').each((_, el) => {
           const href = $(el).attr('href');
           if (!href || href.startsWith('#') || href.startsWith('mailto:')) return;
-          
+
           try {
             const fullUrl = new URL(href, currentUrl).href;
             if (isSameDomain(fullUrl, startUrl)) {
@@ -123,7 +124,7 @@ export async function crawlAndSave(
   }
 
   console.log(`✅ [Crawl] Complete. Saved ${savedPages.length} pages and ${savedAssets.length} assets`);
-  
+
   return {
     savedPages,
     totalPages: savedPages.length,
@@ -133,13 +134,13 @@ export async function crawlAndSave(
 }
 
 async function extractAssets(
-  $: cheerio.CheerioAPI, 
-  pageUrl: string, 
-  startUrl: string, 
+  $: cheerio.CheerioAPI,
+  pageUrl: string,
+  startUrl: string,
   assetQueue: Set<string>
 ): Promise<void> {
   const baseUrl = new URL(pageUrl);
-  
+
   // Extract CSS files from <link> tags
   $('link[rel="stylesheet"], link[type="text/css"]').each((_, el) => {
     const href = $(el).attr('href');
@@ -220,9 +221,9 @@ async function extractAssets(
 }
 
 function extractCssAssets(
-  cssContent: string, 
-  pageUrl: string, 
-  startUrl: string, 
+  cssContent: string,
+  pageUrl: string,
+  startUrl: string,
   assetQueue: Set<string>
 ): void {
   // Extract @import statements
@@ -259,7 +260,7 @@ async function downloadAsset(assetUrl: string, startUrl: string): Promise<boolea
   try {
     const browser = await getBrowser();
     const page = await browser.newPage();
-    
+
     try {
       // Set appropriate headers for different asset types
       await page.setExtraHTTPHeaders({
@@ -268,7 +269,7 @@ async function downloadAsset(assetUrl: string, startUrl: string): Promise<boolea
       });
 
       const response = await page.goto(assetUrl, { timeout: 10000 });
-      
+
       if (!response || response.status() !== 200) {
         console.warn(`⚠️ [Asset] Non-200 response for ${assetUrl}: ${response?.status()}`);
         return false;
@@ -276,13 +277,13 @@ async function downloadAsset(assetUrl: string, startUrl: string): Promise<boolea
 
       const content = await response.buffer();
       const contentType = response.headers()['content-type'] || getMimeTypeFromUrl(assetUrl);
-      
+
       // Create S3 key from URL
       const s3Key = assetUrl.replace(/^https?:\/\//, '');
-      
+
       console.log(`💾 [Asset] Saving to S3: ${s3Key} (${content.length} bytes, ${contentType})`);
       await saveFile(s3Key, content, contentType);
-      
+
       return true;
     } finally {
       await page.close();
@@ -311,7 +312,7 @@ function getMimeTypeFromUrl(url: string): string {
     'eot': 'application/vnd.ms-fontobject',
     'otf': 'font/otf'
   };
-  
+
   return mimeTypes[ext || ''] || 'application/octet-stream';
 }
 
@@ -348,9 +349,15 @@ export async function cleanup(): Promise<void> {
 
 async function getBrowser(): Promise<Browser> {
   if (!browserInstance) {
+    // Serverless environment configuration
+    chromium.setHeadlessMode = true;
+    chromium.setGraphicsMode = false;
+
     browserInstance = await launch({
-      headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless,
     });
   }
   return browserInstance;
@@ -374,13 +381,13 @@ function detectPlatform(content: string): string {
     { name: 'next.js', indicators: ['__NEXT_DATA__'] },
     { name: 'sveltekit', indicators: ['data-sveltekit-preload-data'] }
   ];
-  
+
   for (const platform of platforms) {
     if (platform.indicators.some(indicator => content.includes(indicator))) {
       return platform.name;
     }
   }
-  
+
   return 'unknown';
 }
 
