@@ -242,9 +242,11 @@ function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>)
   let updated = html;
   
   console.log(`🔗 [URL Replace] Starting replacement for ${Object.keys(fileMapping).length} files`);
+  console.log(`🔗 [URL Replace] Available file mappings:`, Object.keys(fileMapping));
   
   // Step 2: Replace HTML attribute URLs (href, src, action, etc.)
-  const htmlAttrPattern = /((?:href|src|action|data-src|data-href|content)=)(["'])([^"']*?)\2/g;
+  // Handle quoted attributes
+  const htmlAttrPattern = /((?:href|src|action|data-src|data-href|content|poster|background)=)(["'])([^"']*?)\2/gi;
   updated = updated.replace(htmlAttrPattern, (match, attrName, quote, url) => {
     if (shouldSkipUrl(url)) {
       return match;
@@ -260,15 +262,32 @@ function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>)
     return match;
   });
   
+  // Handle unquoted attributes (less common but valid HTML)
+  const htmlAttrUnquotedPattern = /((?:href|src|action|data-src|data-href|content|poster|background)=)([^\s>"']+)/gi;
+  updated = updated.replace(htmlAttrUnquotedPattern, (match, attrName, url) => {
+    if (shouldSkipUrl(url)) {
+      return match;
+    }
+    
+    const txId = findPathMapping(url, pathLookup);
+    if (txId) {
+      const arweaveUrl = `https://arweave.net/${txId}`;
+      console.log(`🔗 [HTML Unquoted] ${url} -> ${arweaveUrl}`);
+      return `${attrName}"${arweaveUrl}"`;
+    }
+    
+    return match;
+  });
+  
   // Step 3: Handle srcset attributes separately (they can contain multiple URLs)
-  const srcsetPattern = /(srcset=)(["'])([^"']*?)\2/g;
+  const srcsetPattern = /(srcset=)(["'])([^"']*?)\2/gi;
   updated = updated.replace(srcsetPattern, (match, attrName, quote, srcsetValue) => {
-    const updatedSrcset = srcsetValue.replace(/(\S+?)(\s+[0-9]+[wx]?)?(?=\s*,|\s*$)/g, (urlMatch: string, url: string, descriptor: string = '') => {
-      if (shouldSkipUrl(url)) {
+    const updatedSrcset = srcsetValue.replace(/(\S+?)(\s+[0-9\.]+[wx]?)?(?=\s*,|\s*$)/g, (urlMatch: string, url: string, descriptor: string = '') => {
+      if (shouldSkipUrl(url.trim())) {
         return urlMatch;
       }
       
-      const txId = findPathMapping(url, pathLookup);
+      const txId = findPathMapping(url.trim(), pathLookup);
       if (txId) {
         const arweaveUrl = `https://arweave.net/${txId}`;
         console.log(`🔗 [Srcset] ${url} -> ${arweaveUrl}`);
@@ -324,16 +343,33 @@ function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>)
 
 function buildPathLookup(fileMapping: Record<string, string>): Map<string, string> {
   const lookup = new Map<string, string>();
+  const conflicts = new Map<string, string[]>();
   
   for (const [originalPath, txId] of Object.entries(fileMapping)) {
     const variations = generatePathVariations(originalPath);
     
     for (const variation of variations) {
-      // Use the most specific (longest) path if there are conflicts
-      if (!lookup.has(variation) || variation.length > (lookup.get(variation)?.length || 0)) {
+      if (lookup.has(variation)) {
+        // Track conflicts for debugging
+        if (!conflicts.has(variation)) {
+          conflicts.set(variation, [lookup.get(variation)!]);
+        }
+        conflicts.get(variation)!.push(txId);
+        
+        // Use the most specific (longest original path) if there are conflicts
+        const existingOriginal = Object.keys(fileMapping).find(key => fileMapping[key] === lookup.get(variation)!);
+        if (!existingOriginal || originalPath.length > existingOriginal.length) {
+          lookup.set(variation, txId);
+        }
+      } else {
         lookup.set(variation, txId);
       }
     }
+  }
+  
+  // Log conflicts for debugging
+  if (conflicts.size > 0) {
+    console.warn(`⚠️ [Path Lookup] Found ${conflicts.size} path conflicts:`, Array.from(conflicts.entries()));
   }
   
   return lookup;
@@ -349,17 +385,54 @@ function generatePathVariations(path: string): string[] {
   }
   variations.add(normalizedPath);
   
+  // Handle relative paths that start with ./
+  if (normalizedPath.startsWith('./')) {
+    const withoutDotSlash = normalizedPath.substring(2);
+    if (withoutDotSlash) {
+      variations.add('/' + withoutDotSlash);
+      variations.add(withoutDotSlash);
+    }
+  }
+  
   // Without leading slash
   if (normalizedPath.startsWith('/')) {
     const withoutLeading = normalizedPath.substring(1);
     if (withoutLeading) {
       variations.add(withoutLeading);
+      // Also add with ./ prefix for relative paths
+      variations.add('./' + withoutLeading);
     }
   }
   
   // With leading slash (if doesn't have one)
   if (!normalizedPath.startsWith('/') && normalizedPath) {
     variations.add('/' + normalizedPath);
+    // Also add relative path version
+    if (!normalizedPath.startsWith('./')) {
+      variations.add('./' + normalizedPath);
+    }
+  }
+  
+  // Handle URL encoded versions
+  try {
+    const decoded = decodeURIComponent(normalizedPath);
+    if (decoded !== normalizedPath) {
+      variations.add(decoded);
+      if (decoded.startsWith('/')) {
+        const withoutLeading = decoded.substring(1);
+        if (withoutLeading) {
+          variations.add(withoutLeading);
+          variations.add('./' + withoutLeading);
+        }
+      } else {
+        variations.add('/' + decoded);
+        if (!decoded.startsWith('./')) {
+          variations.add('./' + decoded);
+        }
+      }
+    }
+  } catch (e) {
+    // Invalid URL encoding, skip
   }
   
   // For HTML files, add variations without .html extension
@@ -453,6 +526,17 @@ function findPathMapping(url: string, pathLookup: Map<string, string>): string |
     return null;
   }
   
+  // Additional cleanup for common URL issues
+  cleanUrl = cleanUrl.replace(/\/+/g, '/'); // Remove double slashes
+  if (cleanUrl.length > 1 && cleanUrl.endsWith('/')) {
+    cleanUrl = cleanUrl.slice(0, -1); // Remove trailing slash except for root
+  }
+  
+  // Normalize relative paths that start with ./
+  if (cleanUrl.startsWith('./')) {
+    cleanUrl = cleanUrl.substring(2);
+  }
+  
   // Handle root path
   if (cleanUrl === '/' || cleanUrl === '') {
     const rootOptions = ['/index.html', 'index.html', '/'];
@@ -500,6 +584,9 @@ function shouldSkipUrl(url: string): boolean {
   
   const trimmedUrl = url.trim();
   
+  // Skip very short URLs that are likely not actual file paths
+  if (trimmedUrl.length < 2) return true;
+  
   const skipPatterns = [
     /^https?:\/\//i,         // External URLs (case insensitive)
     /^\/\//,                 // Protocol-relative URLs
@@ -514,7 +601,9 @@ function shouldSkipUrl(url: string): boolean {
     /^moz-extension:/i,      // Firefox extension URIs
     /^chrome-extension:/i,   // Chrome extension URIs
     /arweave\.net/i,         // Already processed Arweave URLs
-    /^[\w-]+:\/\//          // Other protocols
+    /^[\w-]+:\/\//,          // Other protocols
+    /^{.*}$/,                // Template literals or variables
+    /^\$\{.*\}$/             // Template variables
   ];
   
   // Also skip if it looks like a CDN or external domain
@@ -525,7 +614,10 @@ function shouldSkipUrl(url: string): boolean {
     /ajax\.googleapis\.com/i,
     /code\.jquery\.com/i,
     /cdn\./i,
-    /amazonaws\.com/i
+    /amazonaws\.com/i,
+    /jsdelivr\.net/i,
+    /unpkg\.com/i,
+    /cdnjs\.cloudflare\.com/i
   ];
   
   return skipPatterns.some(pattern => pattern.test(trimmedUrl)) ||
@@ -535,7 +627,7 @@ function shouldSkipUrl(url: string): boolean {
 function replaceJsonReferences(content: string, pathLookup: Map<string, string>): string {
   // Handle JSON-like references in manifests, service workers, etc.
   // Look for quoted strings that look like file paths (contain common file extensions)
-  const jsonPattern = /"([^"]*\.(?:html|htm|css|js|mjs|jsx|ts|tsx|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|eot|otf|json|xml|txt|pdf|mp4|mp3|wav|ogg)(?:\?[^"]*)?(?:#[^"]*)?)"/g;
+  const jsonPattern = /"([^"]*\.(?:html|htm|css|js|mjs|jsx|ts|tsx|png|jpg|jpeg|gif|svg|webp|ico|woff|woff2|ttf|eot|otf|json|xml|txt|pdf|mp4|mp3|wav|ogg)(?:\?[^"]*)?(?:#[^"]*)?)"/gi;
   
   return content.replace(jsonPattern, (match, path) => {
     // Clean the path (remove query params and fragments for lookup)
