@@ -4,9 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "bun next dev",
-    "build": "bun --bun next build",
-    "start": "bun --bun next start",
-    "lint": "bun --bun next lint"
+    "build": "next build",
+    "start": "next start",
+    "lint": "bun next lint"
   },
   "dependencies": {
     "@ardrive/turbo-sdk": "^1.26.0",
