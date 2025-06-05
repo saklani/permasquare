@@ -107,13 +107,13 @@ export default function Home() {
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 placeholder="Enter website URL to archive..."
-                className="w-full pl-12 pr-4 py-3.5 bg-slate-50/50 border border-slate-200 rounded-xs text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 focus:bg-white transition-all duration-200"
+                className="w-full pl-10 pr-3 py-2.5 bg-slate-50/50 border border-slate-200 rounded-xs text-sm text-slate-800 placeholder-slate-400 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-300 focus:bg-white transition-all duration-200"
               />
             </div>
             <button
               onClick={handleAnalyze}
               disabled={loading || !url}
-              className="px-7 py-3.5 bg-indigo-600 text-white font-medium rounded-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="px-5 py-2.5 bg-indigo-600 text-white font-medium rounded-xs hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
               style={!loading && url ? {} : { backgroundColor: '#1d1814' }}
             >
               {loading ? (
@@ -167,7 +167,7 @@ export default function Home() {
               <button
                 onClick={handleExtract}
                 disabled={loading}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 text-white font-medium rounded-xs hover:bg-emerald-700 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white font-medium rounded-xs hover:bg-emerald-700 disabled:opacity-50 transition-colors text-sm"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
@@ -209,7 +209,7 @@ export default function Home() {
               <button
                 onClick={handleDeploy}
                 disabled={loading}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-purple-600 text-white font-medium rounded-xs hover:bg-purple-700 disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-purple-600 text-white font-medium rounded-xs hover:bg-purple-700 disabled:opacity-50 transition-colors text-sm"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />

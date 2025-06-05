@@ -34,74 +34,92 @@ export async function deployWithTurbo(
   const { pages, assets } = await getSiteContent(hostname);
   console.log(`📦 [Turbo] Loading ${pages.size} pages and ${assets.size} assets`);
   
-  // Track total costs
-  let totalCostWinston = 0;
-  
-  // Upload all files and track their transaction IDs
   const fileMapping: Record<string, string> = {};
-  
-  // Upload pages
-  for (const [path, content] of pages.entries()) {
-    const result = await turbo.upload({
-      data: content,
-      dataItemOpts: {
-        tags: [
-          { name: 'Content-Type', value: 'text/html' },
-          { name: 'Path', value: path }
-        ]
-      }
-    });
-    fileMapping[path] = result.id;
-    totalCostWinston += Number(result.winc) || 0;
-    console.log(`📄 [Turbo] Uploaded page: ${path} -> ${result.id} (${result.winc || 0} winc)`);
-  }
-  
-  // Upload assets (with CSS preprocessing)
+  let totalCostWinston = 0;
+
+  // Pass 1: Upload all non-CSS assets
+  console.log("🔄 [Turbo] Pass 1: Uploading non-CSS assets...");
   for (const [path, content] of assets.entries()) {
     const mimeType = getMimeType(path);
-    let processedContent = content;
-    
-    // Process CSS files to update internal references
-    if (mimeType === 'text/css') {
-      processedContent = Buffer.from(
-        preprocessCssContent(content.toString('utf8'), fileMapping, path), 
-        'utf8'
-      );
+    if (mimeType !== 'text/css') {
+      try {
+        const result = await turbo.upload({
+          data: content,
+          dataItemOpts: {
+            tags: [
+              { name: 'Content-Type', value: mimeType },
+              { name: 'Path', value: path }
+            ]
+          }
+        });
+        fileMapping[path] = result.id;
+        totalCostWinston += Number(result.winc) || 0;
+        console.log(`🎨 [Turbo] Uploaded non-CSS asset: ${path} -> ${result.id} (${result.winc || 0} winc)`);
+      } catch (error) {
+        console.error(`❌ [Turbo] Failed to upload non-CSS asset ${path}:`, error);
+        // Optionally, rethrow or collect errors to report later
+        // For now, we'll log and continue, but this item won't be in fileMapping
+      }
     }
-    
-    const result = await turbo.upload({
-      data: processedContent,
-      dataItemOpts: {
-        tags: [
-          { name: 'Content-Type', value: mimeType },
-          { name: 'Path', value: path }
-        ]
-      }
-    });
-    fileMapping[path] = result.id;
-    totalCostWinston += Number(result.winc) || 0;
-    console.log(`🎨 [Turbo] Uploaded asset: ${path} -> ${result.id} (${result.winc || 0} winc)`);
   }
-  
-  // Update HTML content to use transaction IDs and re-upload
-  for (const [path, content] of pages.entries()) {
-    const updatedContent = replaceUrlsWithTxIds(content, fileMapping);
-    
-    const result = await turbo.upload({
-      data: updatedContent,
-      dataItemOpts: {
-        tags: [
-          { name: 'Content-Type', value: 'text/html' },
-          { name: 'Path', value: path }
-        ]
+
+  // Pass 2: Process and upload CSS assets
+  console.log("🔄 [Turbo] Pass 2: Processing and uploading CSS assets...");
+  for (const [path, content] of assets.entries()) {
+    const mimeType = getMimeType(path);
+    if (mimeType === 'text/css') {
+      let processedContentBuffer = content; // Default to original if processing fails
+      try {
+        console.log(`🎨 [Turbo] Processing CSS: ${path}`);
+        const processedCssString = preprocessCssContent(content.toString('utf8'), fileMapping, path);
+        processedContentBuffer = Buffer.from(processedCssString, 'utf8');
+        
+        const result = await turbo.upload({
+          data: processedContentBuffer,
+          dataItemOpts: {
+            tags: [
+              { name: 'Content-Type', value: mimeType },
+              { name: 'Path', value: path }
+            ]
+          }
+        });
+        fileMapping[path] = result.id;
+        totalCostWinston += Number(result.winc) || 0;
+        console.log(`🎨 [Turbo] Uploaded CSS asset: ${path} -> ${result.id} (${result.winc || 0} winc)`);
+      } catch (error) {
+        console.error(`❌ [Turbo] Failed to process or upload CSS asset ${path}:`, error);
+        // If CSS processing/upload fails, its links might be broken or it might be missing.
       }
-    });
-    fileMapping[path] = result.id;
-    totalCostWinston += Number(result.winc) || 0;
-    console.log(`🔄 [Turbo] Updated page with links: ${path} -> ${result.id} (${result.winc || 0} winc)`);
+    }
+  }
+
+  // Pass 3: Process and upload HTML pages
+  console.log("🔄 [Turbo] Pass 3: Processing and uploading HTML pages...");
+  for (const [path, content] of pages.entries()) {
+    let processedContentString = content; // Default to original
+    try {
+      console.log(`📄 [Turbo] Processing HTML: ${path}`);
+      processedContentString = replaceUrlsWithTxIds(content, fileMapping);
+      
+      const result = await turbo.upload({
+        data: processedContentString,
+        dataItemOpts: {
+          tags: [
+            { name: 'Content-Type', value: 'text/html' },
+            { name: 'Path', value: path }
+          ]
+        }
+      });
+      fileMapping[path] = result.id;
+      totalCostWinston += Number(result.winc) || 0;
+      console.log(`📄 [Turbo] Uploaded HTML page: ${path} -> ${result.id} (${result.winc || 0} winc)`);
+    } catch (error) {
+      console.error(`❌ [Turbo] Failed to process or upload HTML page ${path}:`, error);
+    }
   }
   
   // Create and upload manifest
+  console.log("📋 [Turbo] Creating and uploading manifest...");
   const manifest = createArweaveManifest(fileMapping);
   const manifestResult = await turbo.upload({
     data: JSON.stringify(manifest, null, 2),
