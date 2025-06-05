@@ -1,102 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { estimateDeployment, deployToArweave } from '@/lib/arweave/deploy';
-import { ExtractionManifest } from '@/types/extraction';
-import { DeploymentSettings } from '@/types/arweave';
+import { deployWithTurbo, estimateDeploymentCost } from '@/service/deploy';
+import { generateWallet } from '@/service/arweave';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { manifest, wallet, settings = {}, action = 'estimate' } = body;
-
-    if (!manifest) {
-      return NextResponse.json(
-        { error: 'Site manifest is required' },
-        { status: 400 }
-      );
+    const { hostname, wallet } = await request.json();
+    
+    if (!hostname) {
+      return NextResponse.json({ error: 'Hostname is required' }, { status: 400 });
     }
-
-    if (action === 'estimate') {
-      try {
-        const estimate = await estimateDeployment(manifest as ExtractionManifest);
-
-        return NextResponse.json({
-          success: true,
-          estimate,
-          message: 'Cost estimation complete.'
-        });
-
-      } catch (error) {
-        return NextResponse.json({
-          success: false,
-          error: 'Failed to estimate deployment cost',
-          details: error instanceof Error ? error.message : String(error)
-        }, { status: 500 });
-      }
-
-    } else if (action === 'deploy') {
-      if (!wallet) {
-        return NextResponse.json(
-          { error: 'Wallet is required for deployment' },
-          { status: 400 }
-        );
-      }
-
-      try {        
-        const deployment = await deployToArweave(
-          manifest as ExtractionManifest,
-          wallet,
-          {
-            onProgress: (progress) => {
-              console.log(`Deployment progress: ${progress.step} - ${progress.percent}% - ${progress.message}`);
-            }
-          }
-        );
-
-        return NextResponse.json({
-          success: true,
-          deployment,
-          message: 'Site deployed successfully to Arweave!'
-        });
-
-      } catch (error) {
-        return NextResponse.json({
-          success: false,
-          error: 'Deployment failed',
-          details: error instanceof Error ? error.message : String(error)
-        }, { status: 500 });
-      }
+    
+    let jwkWallet = wallet;
+    if (!jwkWallet) {
+      console.log('🔑 [API] No wallet provided, generating new one');
+      jwkWallet = await generateWallet();
     }
-
-    return NextResponse.json(
-      { error: 'Invalid action. Use "estimate" or "deploy"' },
-      { status: 400 }
-    );
-
+    
+    console.log(`🚀 [API] Deploying site: ${hostname}`);
+    
+    const result = await deployWithTurbo(hostname, jwkWallet);
+    
+    return NextResponse.json({
+      success: true,
+      ...result,
+      wallet: jwkWallet
+    });
   } catch (error) {
-    console.error('Deploy API error:', error);
+    console.error('❌ [API] Deployment failed:', error);
     return NextResponse.json(
-      { error: 'Failed to process deployment request', details: error instanceof Error ? error.message : String(error) },
+      { error: 'Failed to deploy site' },
       { status: 500 }
     );
   }
 }
 
-export async function GET() {
-  return NextResponse.json({
-    message: 'Arweave deployment API endpoint',
-    methods: ['POST'],
-    actions: {
-      estimate: 'Estimate deployment cost',
-      deploy: 'Deploy site to Arweave',
-      check_balance: 'Check wallet balance',
-      status: 'Check deployment status'
-    },
-    parameters: {
-      manifest: 'object (required) - Site manifest from extraction',
-      wallet: 'object (required for deploy/check_balance) - Arweave wallet JWK',
-      settings: 'object (optional) - Deployment settings',
-      action: 'string (optional) - Action to perform (default: estimate)',
-      txId: 'string (required for status) - Transaction ID to check'
+export async function GET(request: NextRequest) {
+  try {
+    const { searchParams } = new URL(request.url);
+    const hostname = searchParams.get('hostname');
+    
+    if (!hostname) {
+      return NextResponse.json({ error: 'Hostname is required' }, { status: 400 });
     }
-  });
+    
+    console.log(`💰 [API] Estimating cost for: ${hostname}`);
+    
+    const cost = await estimateDeploymentCost(hostname);
+    
+    return NextResponse.json(cost);
+  } catch (error) {
+    console.error('❌ [API] Cost estimation failed:', error);
+    return NextResponse.json(
+      { error: 'Failed to estimate cost' },
+      { status: 500 }
+    );
+  }
 } 

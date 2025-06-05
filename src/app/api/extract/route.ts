@@ -1,88 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { analyzeSite, extractSite, cleanup } from '@/lib/extraction/basic';
-import { Progress } from '@/types/progress';
+import { crawlAndSave } from '@/service/extract';
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { url, action = 'analyze', maxPages = 10, delay = 1000 } = body;
-
-    if (!url) {
-      return NextResponse.json(
-        { error: 'URL is required' },
-        { status: 400 }
-      );
-    }
-
-    // Validate URL
-    try {
-      new URL(url);
-    } catch {
-      return NextResponse.json(
-        { error: 'Invalid URL provided' },
-        { status: 400 }
-      );
-    }
-
-    if (action === 'analyze') {
-      // Just analyze the site
-      try {
-        const analysis = await analyzeSite(url);
-        
-        return NextResponse.json({
-          success: true,
-          analysis,
-          message: 'Site analysis complete.'
-        });
-      } catch (error) {
-        return NextResponse.json({
-          success: false,
-          error: 'Analysis failed',
-          details: error instanceof Error ? error.message : String(error)
-        }, { status: 500 });
-      }
+    const { url, maxPages = 100, delay = 1000 } = await request.json();
     
-    } else if (action === 'extract') {
-      // Full extraction
-      let progressData: Progress | null = null;
-      
-      try {
-        const manifest = await extractSite(url, {
-          maxPages: Math.min(maxPages, 20), // Cap at 20 pages
-          delay,
-          onProgress: (progress: Progress) => {
-            progressData = progress;
-          }
-        });
-        
-        return NextResponse.json({
-          success: true,
-          manifest,
-          message: 'Site extraction complete!'
-        });
-        
-      } catch (error) {
-        return NextResponse.json({
-          success: false,
-          error: 'Extraction failed',
-          details: error instanceof Error ? error.message : String(error),
-          progress: progressData
-        }, { status: 500 });
-      } finally {
-        // Clean up browser resources
-        await cleanup();
-      }
+    if (!url) {
+      return NextResponse.json({ error: 'URL is required' }, { status: 400 });
     }
-
-    return NextResponse.json(
-      { error: 'Invalid action. Use "analyze" or "extract"' },
-      { status: 400 }
-    );
-
+    
+    console.log(`🕸️ [API] Starting extraction for: ${url}`);
+    
+    const result = await crawlAndSave(url, { maxPages, delay });
+    
+    return NextResponse.json({
+      hostname: new URL(url).hostname,
+      ...result
+    });
   } catch (error) {
-    console.error('API error:', error);
+    console.error('❌ [API] Extraction failed:', error);
     return NextResponse.json(
-      { error: 'Failed to process request', details: error instanceof Error ? error.message : String(error) },
+      { error: 'Failed to extract site' },
       { status: 500 }
     );
   }

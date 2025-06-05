@@ -1,79 +1,94 @@
 # Permasquare
 
-A tool to publish Squarespace (or similar CMS) sites to Arweave with ArNS integration.
+Archive websites to Arweave with turbo bundling - simple, fast, permanent.
 
-## Features
+## Architecture
 
-- 🔗 **Arweave Wallet Integration** - Connect using ArConnect or other Arweave wallets
-- 📦 **Site Extraction** - Extract and convert Squarespace sites to static files
-- 🌐 **Permanent Storage** - Store sites permanently on Arweave
-- 🏷️ **ArNS Integration** - Register friendly domain names for deployed sites
+**Simple 3-step process:**
+1. **Analyze** - Detect platform and analyze website structure  
+2. **Extract** - Crawl pages and save to S3 storage
+3. **Deploy** - Bundle and deploy to Arweave with turbo
 
-## Getting Started
+## API Endpoints
 
-### Prerequisites
-
-- [Bun](https://bun.sh/) installed on your system
-- An Arweave wallet (ArConnect browser extension recommended)
-
-### Installation
-
-1. Clone the repository:
-```bash
-git clone <repository-url>
-cd permasquare
+### `/api/analyze` (POST)
+Analyzes a website to detect platform and structure.
+```json
+{ "url": "https://example.com" }
 ```
 
-2. Install dependencies:
-```bash
-bun install
+### `/api/extract` (POST)  
+Crawls website and saves pages to S3 storage.
+```json
+{ 
+  "url": "https://example.com",
+  "maxPages": 100,
+  "delay": 1000
+}
 ```
 
-3. Run the development server:
-```bash
-bun dev
+### `/api/deploy` (POST)
+Creates turbo bundle and deploys to Arweave.
+```json
+{ 
+  "hostname": "example.com",
+  "wallet": "optional_jwk_wallet"
+}
 ```
 
-4. Open [http://localhost:3000](http://localhost:3000) in your browser
+## Services
 
-### Usage
+- `/service/extract.ts` - Website crawling and analysis
+- `/service/storage.ts` - S3 storage operations  
+- `/service/deploy.ts` - Turbo bundling and deployment
+- `/service/arweave.ts` - Wallet generation and utilities
 
-1. **Connect Wallet**: Click the "Connect Wallet" button and select your Arweave wallet
-2. **Upload Site**: Use the "Upload Site" button to extract and deploy your Squarespace site
-3. **Register ArNS**: Register a friendly domain name for your deployed site
+## Storage Structure
+
+URLs are stored using clean paths:
+- `https://example.com/about.html` → S3 key: `example.com/about.html`
+- `https://example.com/` → S3 key: `example.com/index.html`
+
+## Deployment Process
+
+1. **Load content** from S3 by hostname
+2. **Create transactions** for each file with known IDs
+3. **Replace URLs** in HTML with Arweave transaction URLs  
+4. **Bundle transactions** and upload to Arweave
+5. **Generate manifest** for gateway access
 
 ## Tech Stack
 
-- **Frontend**: Next.js 14 with TypeScript
-- **Styling**: Tailwind CSS
-- **Wallet**: Arweave Wallet Kit
-- **Blockchain**: Arweave + ArNS
-- **Package Manager**: Bun
+- **Runtime**: Bun
+- **Framework**: Next.js
+- **Crawler**: Puppeteer + Cheerio
+- **Storage**: AWS S3
+- **Deployment**: Turbo SDK
+- **Blockchain**: Arweave
 
-## Project Structure
+## Environment Variables
 
-```
-permasquare/
-├── src/
-│   └── app/
-│       ├── layout.tsx      # App layout with wallet provider
-│       ├── page.tsx        # Main page with wallet connection
-│       └── globals.css     # Global styles
-├── package.json
-└── README.md
+```bash
+AWS_REGION=us-east-1
+AWS_ACCESS_KEY_ID=your_key
+AWS_SECRET_ACCESS_KEY=your_secret  
+S3_BUCKET_NAME=your_bucket
 ```
 
-## Development Roadmap
+## Usage
 
-See [tasks.md](tasks.md) for the complete development roadmap and task breakdown.
+```bash
+bun install
+bun dev
+```
 
-## Contributing
+Open `http://localhost:3000` and start archiving websites!
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
+## Architecture Principles
 
-## License
-
-MIT License
+- **No callbacks, fallbacks, or class hierarchies**
+- **Maximum 3 layers of function nesting**  
+- **Simple, direct code flow**
+- **Real-time crawling and saving**
+- **URL-based storage keys**
+- **Turbo bundling for known transaction IDs**
