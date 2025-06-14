@@ -121,7 +121,7 @@ export default function Home() {
       const response = await fetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, maxPages: 10 })
+        body: JSON.stringify({ url, maxPages: 50 })
       });
       
       const data = await response.json();

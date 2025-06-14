@@ -6,7 +6,8 @@
     "dev": "bun next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "bun next lint"
+    "lint": "bun next lint",
+    "clean": "rm -rf temp logs"
   },
   "dependencies": {
     "@ar.io/sdk": "^3.12.2",

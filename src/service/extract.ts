@@ -3,6 +3,8 @@ import { Browser, launch } from 'puppeteer-core';
 import chromium from '@sparticuz/chromium';
 import { URL } from 'url';
 import { saveFile } from './storage';
+import { createHash } from 'crypto';
+import { readFile } from 'fs/promises';
 
 export interface ExtractionResult {
   savedPages: string[];
@@ -52,9 +54,71 @@ export async function crawlAndSave(
       const page = await browser.newPage();
 
       try {
-        await page.goto(currentUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+        const response = await page.goto(currentUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+        
+        // Check if page returned an error status
+        if (!response || response.status() >= 400) {
+          console.log(`⚠️ [Crawl] Skipping ${currentUrl} - HTTP ${response?.status()}`);
+          await page.close();
+          if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
         const content = await page.content();
+        
+        // Check if content contains error indicators
+        if (content.includes('<h1 id="_top" data-page-title="" class="astro-jbfsktt5">404</h1>') ||
+            content.includes('Page not found') ||
+            content.includes('<Code>AccessDenied</Code>') ||
+            content.includes('<Message>Access Denied</Message>')) {
+          console.log(`⚠️ [Crawl] Skipping ${currentUrl} - contains error content`);
+          await page.close();
+          if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+        
         const $ = cheerio.load(content);
+
+        // Check for duplicate content before saving
+        const contentHash = createHash('md5').update(content).digest('hex');
+        let isDuplicate = false;
+        let duplicateUrl = '';
+        
+        // Check against already saved pages
+        for (const savedUrl of savedPages) {
+          try {
+            // Generate the S3 key for the saved URL to check its content
+            let savedS3Key = savedUrl.replace(/^https?:\/\//, '');
+            if (savedS3Key.endsWith('/')) {
+              savedS3Key += 'index.html';
+            } else {
+              const lastSlashIndex = savedS3Key.lastIndexOf('/');
+              const filename = lastSlashIndex !== -1 ? savedS3Key.substring(lastSlashIndex + 1) : savedS3Key;
+              if (!filename.includes('.')) {
+                savedS3Key += '.html';
+              }
+            }
+            
+            // Read the saved file and compare hashes
+            const savedContent = await readFile(`temp/${savedS3Key.replace(/[^a-zA-Z0-9._-]/g, '_')}`, 'utf8');
+            const savedHash = createHash('md5').update(savedContent).digest('hex');
+            
+            if (contentHash === savedHash) {
+              isDuplicate = true;
+              duplicateUrl = savedUrl;
+              break;
+            }
+          } catch {
+            // Ignore errors reading saved files
+          }
+        }
+        
+        if (isDuplicate) {
+          console.log(`🔄 [Crawl] Skipping duplicate content: ${currentUrl} (same as ${duplicateUrl})`);
+          await page.close();
+          if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
 
         // Save page using URL without protocol as S3 key, handle / with index.html
         let s3Key = currentUrl.replace(/^https?:\/\//, '');
@@ -82,6 +146,8 @@ export async function crawlAndSave(
 
         // Extract links for further crawling
         const links: string[] = [];
+        
+        // Extract regular <a> tag links
         $('a[href]').each((_, el) => {
           const href = $(el).attr('href');
           if (!href || href.startsWith('#') || href.startsWith('mailto:')) return;
@@ -95,9 +161,44 @@ export async function crawlAndSave(
             // Ignore invalid URLs
           }
         });
+        
+        // Extract navigation menu links (common in documentation sites)
+        $('nav a[href], .navigation a[href], .nav a[href], .menu a[href], .sidebar a[href]').each((_, el) => {
+          const href = $(el).attr('href');
+          if (!href || href.startsWith('#') || href.startsWith('mailto:')) return;
+
+          try {
+            const fullUrl = new URL(href, currentUrl).href;
+            if (isSameDomain(fullUrl, startUrl)) {
+              links.push(fullUrl);
+            }
+          } catch {
+            // Ignore invalid URLs
+          }
+        });
+        
+        // Look for common documentation patterns in href attributes
+        const commonDocPaths = [
+          '/quickstart', '/quickstart/', '/quickstart.html',
+          '/api', '/api/', '/api.html', '/docs/api', '/docs/api/',
+          '/examples', '/examples/', '/examples.html',
+          '/bulk-uploads', '/bulk-uploads/', '/examples/bulk-uploads', '/examples/bulk-uploads/',
+          '/references', '/references/', '/references.html', '/docs/references', '/docs/references/',
+          '/glossary', '/glossary/', '/glossary.html'
+        ];
+        
+        for (const path of commonDocPaths) {
+          try {
+            const testUrl = new URL(path, startUrl).href;
+            links.push(testUrl);
+          } catch {
+            // Ignore invalid URLs
+          }
+        }
 
         // Add new links to queue
         const newLinks = links.filter((link: string) => !visited.has(link));
+        console.log(`🔗 [Links] Found ${links.length} links, ${newLinks.length} new:`, newLinks.slice(0, 5));
         queue.push(...newLinks.slice(0, 10)); // Limit new links per page
 
       } finally {
@@ -107,6 +208,7 @@ export async function crawlAndSave(
       if (delay > 0) await new Promise(resolve => setTimeout(resolve, delay));
     } catch (error) {
       console.error(`❌ [Crawl] Failed to process ${currentUrl}:`, error);
+      console.error(`❌ [Crawl] Error details:`, error instanceof Error ? error.message : String(error));
     }
   }
 
