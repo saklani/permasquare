@@ -1,6 +1,6 @@
 import { TurboFactory } from '@ardrive/turbo-sdk';
-import { loadWalletFromEnv } from './arweave';
 import { getMultipleFiles, listFiles } from './storage';
+import { loadWalletFromEnv } from './arweave';
 
 export interface DeploymentResult {
   bundleId: string;
@@ -8,6 +8,15 @@ export interface DeploymentResult {
   fileMapping: Record<string, string>;
   totalCost: number;
 }
+
+// -----------------------------
+// ⚠️  DRY-RUN MODE
+//    Set to true to disable actual Arweave uploads.
+//    All turbo.upload calls are skipped and a fake transaction id
+//    is generated so the rest of the pipeline continues to work.
+//    Flip to false (or remove) for real deployment.
+// -----------------------------
+const DRY_RUN = false;
 
 export async function deployWithTurbo(
   hostname: string,
@@ -40,20 +49,26 @@ export async function deployWithTurbo(
       try {
         console.log(`📦 [Turbo] Processing asset: ${path}`);
         
-        // Upload to Arweave via Turbo
-        const result = await turbo.upload({
-          data: content,
-          dataItemOpts: {
-            tags: [
-              { name: 'Content-Type', value: mimeType },
-              { name: 'Path', value: path }
-            ]
-          }
-        });
+        let txId: string;
+        if (DRY_RUN) {
+          // generate deterministic fake id based on path
+          txId = `fake_${Buffer.from(path).toString('base64').slice(0, 32)}`;
+        } else {
+          const result = await turbo.upload({
+            data: content,
+            dataItemOpts: {
+              tags: [
+                { name: 'Content-Type', value: mimeType },
+                { name: 'Path', value: path }
+              ]
+            }
+          });
+          txId = result.id;
+          totalCostWinston += Number(result.winc) || 0;
+        }
         
-        fileMapping[path] = result.id;
-        totalCostWinston += Number(result.winc) || 0;
-        console.log(`📦 [Turbo] Processed asset: ${path} -> ${result.id}`);
+        fileMapping[path] = txId;
+        console.log(`📦 [Turbo] Processed asset: ${path} -> ${txId}`);
       } catch (error) {
         console.error(`❌ [Turbo] Failed to process asset ${path}:`, error);
       }
@@ -71,28 +86,62 @@ export async function deployWithTurbo(
         const processedCssString = replaceUrlsWithTxIds(content.toString('utf8'), fileMapping);
         const processedContentBuffer = Buffer.from(processedCssString, 'utf8');
         
-        // Upload to Arweave via Turbo
-        const result = await turbo.upload({
-          data: processedContentBuffer,
-          dataItemOpts: {
-            tags: [
-              { name: 'Content-Type', value: mimeType },
-              { name: 'Path', value: path }
-            ]
-          }
-        });
+        let txId: string;
+        if (DRY_RUN) {
+          txId = `fake_${Buffer.from(path).toString('base64').slice(0, 32)}`;
+        } else {
+          const result = await turbo.upload({
+            data: processedContentBuffer,
+            dataItemOpts: {
+              tags: [
+                { name: 'Content-Type', value: mimeType },
+                { name: 'Path', value: path }
+              ]
+            }
+          });
+          txId = result.id;
+          totalCostWinston += Number(result.winc) || 0;
+        }
         
-        fileMapping[path] = result.id;
-        totalCostWinston += Number(result.winc) || 0;
-        console.log(`🎨 [Turbo] Processed CSS asset: ${path} -> ${result.id}`);
+        fileMapping[path] = txId;
+        console.log(`🎨 [Turbo] Processed CSS asset: ${path} -> ${txId}`);
       } catch (error) {
         console.error(`❌ [Turbo] Failed to process CSS asset ${path}:`, error);
       }
     }
   }
 
-  // Pass 3: Upload HTML pages with URL replacement using complete file mapping
-  console.log("🔄 [Turbo] Pass 3: Processing HTML pages with URL replacement...");
+  // ------------------------------------------------------------------
+  // PASS 3a: Upload all HTML pages RAW (no replacement) to obtain txIds
+  //          This builds a COMPLETE mapping for cross-page links.
+  // ------------------------------------------------------------------
+  console.log("🔄 [Turbo] Pass 3a: Upload raw HTML pages (build mapping)...");
+  for (const [path, content] of pages.entries()) {
+    try {
+      const result = await turbo.upload({
+        data: Buffer.from(content, 'utf8'),
+        dataItemOpts: {
+          tags: [
+            { name: 'Content-Type', value: 'text/html' },
+            { name: 'Path', value: path },
+            { name: 'Pass', value: 'raw' }
+          ]
+        }
+      });
+
+      fileMapping[path] = result.id;
+      totalCostWinston += Number(result.winc) || 0;
+
+      console.log(`📄 [Turbo] Uploaded RAW page: ${path} -> ${result.id}`);
+    } catch (err) {
+      console.error(`❌ [Turbo] RAW HTML upload failed for ${path}:`, err);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // PASS 3b: Re-upload HTML pages with all URLs replaced using full mapping
+  // ------------------------------------------------------------------
+  console.log("🔄 [Turbo] Pass 3b: Upload processed HTML with URL replacement...");
   console.log(`📋 [Debug] Complete fileMapping now contains ${Object.keys(fileMapping).length} entries`);
   
   for (const [path, content] of pages.entries()) {
@@ -100,20 +149,26 @@ export async function deployWithTurbo(
       console.log(`🔗 [Turbo] Processing HTML with URL replacement: ${path}`);
       const processedContentString = replaceUrlsWithTxIds(content, fileMapping);
       
-      // Upload processed content to Arweave
-      const result = await turbo.upload({
-        data: Buffer.from(processedContentString, 'utf8'),
-        dataItemOpts: {
-          tags: [
-            { name: 'Content-Type', value: 'text/html' },
-            { name: 'Path', value: path }
-          ]
-        }
-      });
+      let txId: string;
+      if (DRY_RUN) {
+        txId = `fake_${Buffer.from(path).toString('base64').slice(0, 32)}`;
+      } else {
+        const result = await turbo.upload({
+          data: Buffer.from(processedContentString, 'utf8'),
+          dataItemOpts: {
+            tags: [
+              { name: 'Content-Type', value: 'text/html' },
+              { name: 'Path', value: path }
+            ]
+          }
+        });
+        txId = result.id;
+        totalCostWinston += Number(result.winc) || 0;
+      }
       
-      fileMapping[path] = result.id;
-      totalCostWinston += Number(result.winc) || 0;
-      console.log(`🔗 [Turbo] Processed HTML page: ${path} -> ${result.id}`);
+      fileMapping[path] = txId;
+      
+      console.log(`🔗 [Turbo] Processed HTML page: ${path} -> ${txId}`);
     } catch (error) {
       console.error(`❌ [Turbo] Failed to process HTML page ${path}:`, error);
     }
@@ -127,18 +182,24 @@ export async function deployWithTurbo(
   // Create and upload manifest
   console.log("📋 [Turbo] Creating manifest...");
   const manifest = createArweaveManifest(fileMapping);
-  const manifestResult = await turbo.upload({
-    data: JSON.stringify(manifest, null, 2),
-    dataItemOpts: {
-      tags: [
-        { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
-        { name: 'Type', value: 'manifest' }
-      ]
-    }
-  });
-  totalCostWinston += Number(manifestResult.winc) || 0;
+  let manifestId: string;
+  if (DRY_RUN) {
+    manifestId = `fake_manifest_${Date.now()}`;
+  } else {
+    const manifestResult = await turbo.upload({
+      data: JSON.stringify(manifest, null, 2),
+      dataItemOpts: {
+        tags: [
+          { name: 'Content-Type', value: 'application/x.arweave-manifest+json' },
+          { name: 'Type', value: 'manifest' }
+        ]
+      }
+    });
+    manifestId = manifestResult.id;
+    totalCostWinston += Number(manifestResult.winc) || 0;
+  }
   
-  console.log(`📋 [Turbo] Created manifest: ${manifestResult.id}`);
+  console.log(`📋 [Turbo] Created manifest: ${manifestId} ${DRY_RUN ? '(DRY-RUN)' : ''}`);
   
   // Convert winston to AR for final cost reporting
   const totalCostAR = totalCostWinston / 1000000000000; // 1 AR = 10^12 winston
@@ -147,8 +208,8 @@ export async function deployWithTurbo(
   console.log(`💰 [Turbo] Total deployment cost: ${totalCostWinston} winc (${totalCostAR.toFixed(6)} AR)`);
   
   return {
-    bundleId: manifestResult.id,
-    manifestUrl: `https://arweave.net/${manifestResult.id}`,
+    bundleId: manifestId,
+    manifestUrl: DRY_RUN ? '(dry-run)' : `https://arweave.net/${manifestId}`,
     fileMapping,
     totalCost: totalCostAR
   };
@@ -231,26 +292,36 @@ function calculateContentSize(pages: Map<string, string>, assets: Map<string, Bu
 function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>): string {
   let updated = html;
   
-  // Create lookup for ALL files with comprehensive path variations
-  const lookup: Record<string, string> = {};
-  for (const [path, txId] of Object.entries(fileMapping)) {
-    // Store exact path
-    lookup[path] = txId;
+  // Function to normalize URLs to a standard format for consistent matching
+  const normalizeUrl = (url: string): string => {
+    if (!url || url.trim() === '') return '';
     
-    // For HTML files, create variations
-    if (path.endsWith('.html')) {
-      const withoutExt = path.replace('.html', '');
-      lookup[withoutExt] = txId;
-      
-      // Also try without leading slash
-      if (withoutExt.startsWith('/')) {
-        lookup[withoutExt.substring(1)] = txId;
-      }
+    let normalized = url.trim();
+    
+    // Remove leading slash
+    if (normalized.startsWith('/')) {
+      normalized = normalized.substring(1);
     }
     
-    // For all files, try without leading slash
-    if (path.startsWith('/')) {
-      lookup[path.substring(1)] = txId;
+    // Remove trailing slash
+    if (normalized.endsWith('/')) {
+      normalized = normalized.slice(0, -1);
+    }
+    
+    // Remove .html extension if present
+    if (normalized.endsWith('.html')) {
+      normalized = normalized.replace('.html', '');
+    }
+    
+    return normalized;
+  };
+
+  // Create lookup with normalized keys
+  const lookup: Record<string, string> = {};
+  for (const [path, txId] of Object.entries(fileMapping)) {
+    const normalizedKey = normalizeUrl(path);
+    if (normalizedKey) {
+      lookup[normalizedKey] = txId;
     }
   }
   
@@ -258,7 +329,18 @@ function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>)
   const tryReplaceUrl = (url: string): string | null => {
     if (!url || url.trim() === '') return null;
     
-    // Skip external URLs, special protocols, fragments, and data URLs
+    // Handle previous DRY-RUN fake links: https://arweave.net/fake_<base64>
+    const fakeMatch = url.match(/^https?:\/\/arweave\.net\/fake_([A-Za-z0-9+/=\-]+)$/);
+    if (fakeMatch) {
+      try {
+        const decoded = Buffer.from(fakeMatch[1], 'base64').toString();
+        const normalizedDecoded = normalizeUrl(decoded.replace(/^\//, ''));
+        const realTx = lookup[normalizedDecoded] || lookup[normalizeUrl(decoded)];
+        if (realTx) return `https://arweave.net/${realTx}`;
+      } catch {}
+    }
+
+    // Skip other external URLs, special protocols, fragments, and data URLs
     if (url.startsWith('http://') || url.startsWith('https://') || 
         url.startsWith('//') || url.startsWith('mailto:') || 
         url.startsWith('tel:') || url.startsWith('ftp:') || 
@@ -275,56 +357,19 @@ function replaceUrlsWithTxIds(html: string, fileMapping: Record<string, string>)
     const baseUrl = urlParts[0];
     const queryAndFragment = cleanUrl.substring(baseUrl.length);
     
-    // Remove trailing slash for normalization
-    const baseUrlNoSlash = baseUrl.endsWith('/') ? baseUrl.slice(0, -1) : baseUrl;
-    const baseUrlWithSlash = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+    // Normalize the base URL for lookup
+    const normalizedUrl = normalizeUrl(baseUrl);
     
-    // Try various forms of the URL
-    const urlVariations = [
-      baseUrl,                                                          // exact as-is
-      baseUrlNoSlash,                                                   // without trailing slash
-      baseUrlWithSlash,                                                 // with trailing slash
-      baseUrl.startsWith('/') ? baseUrl : '/' + baseUrl,               // with leading slash
-      baseUrl.startsWith('/') ? baseUrl.substring(1) : baseUrl,        // without leading slash
-      baseUrlNoSlash.startsWith('/') ? baseUrlNoSlash : '/' + baseUrlNoSlash, // no trail slash + leading slash
-      baseUrlNoSlash.startsWith('/') ? baseUrlNoSlash.substring(1) : baseUrlNoSlash, // no trail slash + no leading slash
-      baseUrl + '.html',                                                // add .html
-      baseUrlNoSlash + '.html',                                         // no trail slash + .html
-      (baseUrl.startsWith('/') ? baseUrl : '/' + baseUrl) + '.html',    // leading slash + .html
-      (baseUrlNoSlash.startsWith('/') ? baseUrlNoSlash : '/' + baseUrlNoSlash) + '.html', // lead slash + no trail + .html
-      (baseUrl.startsWith('/') ? baseUrl.substring(1) : baseUrl) + '.html',    // no lead slash + .html
-      (baseUrlNoSlash.startsWith('/') ? baseUrlNoSlash.substring(1) : baseUrlNoSlash) + '.html' // no lead + no trail + .html
-    ];
-    
-    // Handle docs/ prefix variations
-    const normalizedBase = baseUrl.startsWith('/') ? baseUrl.substring(1) : baseUrl;
-    const normalizedBaseNoSlash = normalizedBase.endsWith('/') ? normalizedBase.slice(0, -1) : normalizedBase;
-    
-    if (normalizedBase.startsWith('docs/')) {
-      // Strip docs/ prefix to match actual file paths
-      const withoutDocs = normalizedBase.substring(5); // Remove 'docs/'
-      const withoutDocsNoSlash = withoutDocs.endsWith('/') ? withoutDocs.slice(0, -1) : withoutDocs;
-      
-      urlVariations.push(
-        withoutDocs,                                    // docs/quickstart/ -> quickstart/
-        withoutDocsNoSlash,                             // docs/quickstart/ -> quickstart
-        '/' + withoutDocs,                              // docs/quickstart/ -> /quickstart/
-        '/' + withoutDocsNoSlash,                       // docs/quickstart/ -> /quickstart
-        withoutDocs + '.html',                          // docs/quickstart/ -> quickstart/.html
-        withoutDocsNoSlash + '.html',                   // docs/quickstart/ -> quickstart.html
-        '/' + withoutDocs + '.html',                    // docs/quickstart/ -> /quickstart/.html
-        '/' + withoutDocsNoSlash + '.html'              // docs/quickstart/ -> /quickstart.html
-      );
+    // Handle docs/ prefix by stripping it
+    let lookupKey = normalizedUrl;
+    if (lookupKey.startsWith('docs/')) {
+      lookupKey = lookupKey.substring(5); // Remove 'docs/' prefix
     }
     
-    // Remove duplicates while preserving order
-    const uniqueVariations = [...new Set(urlVariations)];
-    
-    for (const variation of uniqueVariations) {
-      if (lookup[variation]) {
-        const txId = lookup[variation];
-        return `https://arweave.net/${txId}${queryAndFragment}`;
-      }
+    // Try to find a match
+    if (lookup[lookupKey]) {
+      const txId = lookup[lookupKey];
+      return `https://arweave.net/${txId}${queryAndFragment}`;
     }
     
     return null;
